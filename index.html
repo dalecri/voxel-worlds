@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+<link rel="icon" type="image/png" href="assets/icon.png">
+<meta name="theme-color" content="#3cb6a4" />
+<title>Voxel Worlds</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --sat: env(safe-area-inset-top, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+    --ink: #24413c;
+    --ink-dim: rgba(36, 65, 60, 0.7);
+    --panel: rgba(255, 253, 246, 0.78);
+    --panel-solid: #fffdf6;
+    --line: rgba(36, 65, 60, 0.12);
+    --chip: rgba(36, 65, 60, 0.07);
+    --accent: #ff8a5c;
+    --good: #5bbf6a;
+    --shadow: 0 14px 40px -14px rgba(10, 60, 50, 0.45);
+    --font: 'Nunito', system-ui, sans-serif;
+    --display: 'Fredoka', 'Nunito', system-ui, sans-serif;
+  }
+  body.night {
+    --ink: #eef0ff;
+    --ink-dim: rgba(238, 240, 255, 0.7);
+    --panel: rgba(30, 36, 80, 0.72);
+    --panel-solid: #1e2450;
+    --line: rgba(220, 225, 255, 0.14);
+    --chip: rgba(220, 225, 255, 0.09);
+    --shadow: 0 14px 40px -14px rgba(0, 0, 20, 0.8);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none;
+    font-family: var(--font); color: var(--ink); background: #3cb6a4;
+    -webkit-user-select: none; user-select: none;
+  }
+  button { font-family: inherit; color: inherit; border: 0; background: none; cursor: pointer; padding: 0; }
+  #sky, #stars { position: fixed; inset: 0; }
+  #sky { background: linear-gradient(180deg, #9ae8d4, #3cb6a4); }
+  #stars { opacity: 0; background-size: 600px 900px; transition: opacity 1s; pointer-events: none; }
+  #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(14px) saturate(1.3); backdrop-filter: blur(14px) saturate(1.3);
+    transition: background .8s, color .8s;
+  }
+
+  /* top bar */
+  header {
+    position: fixed; left: 0; right: 0; top: 0; padding: calc(var(--sat) + 12px) 16px 0;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; pointer-events: none;
+  }
+  header > * { pointer-events: auto; }
+  .brand { padding: 8px 14px 9px; border-radius: 18px; min-width: 0; flex: 1 1 auto; max-width: 260px; }
+  .brand b { font-family: var(--display); font-weight: 600; font-size: 17px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brand span { font-size: 12px; color: var(--ink-dim); font-weight: 700; white-space: nowrap; display: block; }
+  .chips { display: flex; gap: 2px; padding: 5px; border-radius: 18px; flex: none; }
+  .chip { width: 36px; height: 38px; border-radius: 13px; display: grid; place-items: center; transition: background .2s, transform .15s; }
+  .chip:active { transform: scale(.9); }
+  .chip.on { background: var(--chip); }
+  .chip svg { width: 22px; height: 22px; }
+  #bTime .moon { display: none; }
+  #bTime[data-phase="night"] .moon { display: block; }
+  #bTime[data-phase="night"] .sunI { display: none; }
+  #bTime[data-phase="golden"] .sunI { color: #ff8a3c; }
+  #bTime[data-phase="dawn"] .sunI { color: #ff9ab0; }
+  .sunI { color: #f0a020; }
+
+  /* rotate */
+  .rot { position: fixed; right: 16px; bottom: calc(var(--sab) + 196px); display: flex; flex-direction: column; gap: 8px; }
+  .rot button { width: 44px; height: 44px; border-radius: 15px; display: grid; place-items: center; }
+  .rot svg { width: 22px; height: 22px; }
+
+  /* palette tray */
+  #tray {
+    position: fixed; left: 16px; right: 16px; bottom: calc(var(--sab) + 96px);
+    display: flex; gap: 6px; padding: 8px; border-radius: 20px; overflow-x: auto; scrollbar-width: none;
+    transform: translateY(16px); opacity: 0; pointer-events: none; transition: transform .25s, opacity .2s;
+  }
+  #tray::-webkit-scrollbar { display: none; }
+  #tray.open { transform: none; opacity: 1; pointer-events: auto; }
+  .swatch {
+    flex: none; width: 66px; padding: 6px 2px 5px; border-radius: 14px; display: flex; flex-direction: column; align-items: center; gap: 2px;
+    transition: background .15s, transform .15s;
+  }
+  .swatch img { width: 34px; height: 34px; image-rendering: pixelated; }
+  .swatch i { font-style: normal; font-size: 26px; line-height: 34px; height: 34px; }
+  .swatch span { font-size: 11.5px; font-weight: 800; }
+  .swatch small { font-size: 9.5px; color: var(--ink-dim); font-weight: 700; margin-top: -2px; }
+  .swatch.on { background: var(--chip); box-shadow: inset 0 0 0 2px var(--ink-dim); }
+  .swatch:active { transform: scale(.92); }
+
+  /* tool bar */
+  .tools {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(var(--sab) + 16px);
+    width: min(440px, calc(100% - 32px)); display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px;
+    padding: 6px; border-radius: 24px;
+  }
+  .tools button { height: 62px; border-radius: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; transition: background .2s, transform .15s; }
+  .tools button:active { transform: scale(.92); }
+  .tools svg { width: 26px; height: 26px; }
+  .tools span { font-size: 11.5px; font-weight: 800; letter-spacing: .02em; }
+  .tools button.on { background: var(--ink); color: var(--panel-solid); }
+
+  /* toasts */
+  #toasts { position: fixed; left: 0; right: 0; top: calc(var(--sat) + 76px); display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; padding: 0 16px; }
+  .toast {
+    background: var(--panel-solid); color: var(--ink); border-radius: 16px; padding: 9px 16px; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; align-items: center; text-align: center; max-width: 100%;
+    transform: translateY(-10px) scale(.96); opacity: 0; transition: transform .35s cubic-bezier(.2,1.4,.4,1), opacity .3s;
+  }
+  .toast.in { transform: none; opacity: 1; }
+  .toast b { font-family: var(--display); font-weight: 600; font-size: 15px; color: var(--accent); }
+  .toast span { font-size: 13px; font-weight: 600; }
+
+  /* bottom sheet */
+  .sheet { position: fixed; inset: 0; background: rgba(10, 30, 30, 0); pointer-events: none; transition: background .3s; z-index: 10; }
+  .sheet.open { background: rgba(10, 30, 30, 0.25); pointer-events: auto; }
+  .sheet .body {
+    position: absolute; left: 0; right: 0; bottom: 0; max-height: 82%; overflow-y: auto; margin: 0 auto; max-width: 560px;
+    background: var(--panel-solid); border-radius: 26px 26px 0 0; padding: 8px 16px calc(var(--sab) + 24px);
+    transform: translateY(100%); transition: transform .35s cubic-bezier(.2,.9,.3,1); box-shadow: var(--shadow);
+  }
+  .sheet.open .body { transform: none; }
+  .grab { width: 40px; height: 5px; border-radius: 3px; background: var(--line); margin: 4px auto 6px; }
+  h2 { font-family: var(--display); font-weight: 600; font-size: 19px; margin: 18px 0 8px; }
+  h2 small { font-size: 13px; color: var(--ink-dim); font-weight: 500; margin-left: 6px; }
+  .muted { color: var(--ink-dim); font-size: 13.5px; margin: -2px 0 10px; line-height: 1.45; }
+  .small { font-size: 12.5px; margin-top: 16px; }
+
+  .worlds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .world { text-align: left; border-radius: 18px; padding: 8px; background: var(--chip); display: flex; flex-direction: column; gap: 3px; transition: transform .15s; }
+  .world:active { transform: scale(.96); }
+  .world .art { height: 64px; border-radius: 12px; margin-bottom: 4px; position: relative; overflow: hidden; }
+  .world b { font-family: var(--display); font-weight: 600; font-size: 14px; }
+  .world span { font-size: 11.5px; color: var(--ink-dim); line-height: 1.35; }
+  .world.valley .art { background: linear-gradient(160deg, #eafcff 0 30%, #7fd04b 30% 55%, #4fd6ee 55% 70%, #f2d391 70%); }
+  .world.volcano .art { background: radial-gradient(circle at 50% 30%, #ffb83a 0 10%, #ff5c14 10% 18%, #58525e 18% 45%, #7fd04b 45% 60%, #f2d391 60%); }
+  .world.meadow .art { background: linear-gradient(180deg, #9ae8d4 0 35%, #88d855 35% 70%, #9a6b45 70%); }
+
+  .disc { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .d { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 14px; background: var(--chip); opacity: .6; }
+  .d.got { opacity: 1; }
+  .d i { font-style: normal; width: 26px; height: 26px; border-radius: 9px; display: grid; place-items: center; background: var(--line); font-weight: 800; flex: none; }
+  .d.got i { background: var(--accent); color: #fff; }
+  .d b { display: block; font-size: 13px; }
+  .d span { font-size: 11px; color: var(--ink-dim); line-height: 1.3; display: block; }
+
+  .toggle { width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 12px 4px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: 15px; }
+  .toggle i { width: 44px; height: 26px; border-radius: 13px; background: var(--line); position: relative; transition: background .2s; }
+  .toggle i::after { content: ''; position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .2s; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+  .toggle.on i { background: var(--good); }
+  .toggle.on i::after { transform: translateX(18px); }
+
+  /* intro */
+  #intro {
+    position: fixed; inset: 0; z-index: 20; display: none; align-items: flex-end; justify-content: center;
+    background: linear-gradient(180deg, rgba(20,60,55,0) 20%, rgba(20,60,55,.35));
+  }
+  #intro.open { display: flex; }
+  #intro .card { width: min(560px, 100%); margin: 0 auto; padding: 22px 18px calc(var(--sab) + 22px); border-radius: 28px 28px 0 0; background: var(--panel-solid); animation: rise .6s cubic-bezier(.2,1,.3,1); }
+  @keyframes rise { from { transform: translateY(40%); opacity: 0; } }
+  #intro h1 { font-family: var(--display); font-weight: 600; font-size: 30px; margin: 0; letter-spacing: -.01em; }
+  #intro .lede { font-size: 15px; color: var(--ink-dim); margin: 4px 0 14px; line-height: 1.45; }
+  .tips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+  .tips div { background: var(--chip); border-radius: 14px; padding: 9px 10px; font-size: 12px; font-weight: 700; line-height: 1.3; }
+  .tips b { display: block; font-size: 18px; margin-bottom: 2px; }
+  .pick { font-family: var(--display); font-weight: 500; font-size: 15px; margin: 0 0 8px; }
+
+  /* photo */
+  #photo { position: fixed; inset: 0; z-index: 30; background: rgba(10,25,25,.75); display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: calc(var(--sat) + 20px) 16px calc(var(--sab) + 20px); }
+  #photo.open { display: flex; }
+  #photo img { max-width: 100%; max-height: 70vh; border-radius: 18px; box-shadow: 0 20px 60px rgba(0,0,0,.4); -webkit-user-select: auto; user-select: auto; -webkit-touch-callout: default; }
+  #photo .row { display: flex; gap: 10px; }
+  #photo a, #photo button { background: #fffdf6; color: #24413c; border-radius: 16px; padding: 12px 22px; font-weight: 800; text-decoration: none; font-size: 15px; }
+  #photo p { color: #fff; opacity: .8; font-size: 12.5px; margin: 0; }
+  #flash { position: fixed; inset: 0; background: #fff; opacity: 0; pointer-events: none; z-index: 29; }
+  #flash.go { animation: flash .5s ease-out; }
+  @keyframes flash { from { opacity: .85; } to { opacity: 0; } }
+
+  @media (min-width: 760px) {
+    .rot { bottom: 50%; transform: translateY(50%); }
+    #tray { left: 50%; right: auto; transform: translate(-50%, 16px); max-width: min(760px, calc(100% - 32px)); }
+    #tray.open { transform: translate(-50%, 0); }
+  }
+  @media (max-width: 380px) {
+    .worlds { grid-template-columns: 1fr; }
+    .world { flex-direction: row; align-items: center; gap: 10px; }
+    .world .art { width: 56px; height: 56px; flex: none; margin: 0; }
+    .tips { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div id="sky"></div>
+<div id="stars"></div>
+<canvas id="c"></canvas>
+
+<header>
+  <div class="brand panel"><b id="worldName">Voxel Worlds</b><span id="disc">0 discoveries</span></div>
+  <div class="chips panel">
+    <button class="chip" id="bTime" aria-label="Time of day">
+      <svg class="sunI" viewBox="0 0 24 24" fill="currentColor"><rect x="8" y="8" width="8" height="8" rx="1.5"/><rect x="11" y="2" width="2" height="3" rx="1"/><rect x="11" y="19" width="2" height="3" rx="1"/><rect x="2" y="11" width="3" height="2" rx="1"/><rect x="19" y="11" width="3" height="2" rx="1"/><rect x="4.5" y="4.5" width="2.5" height="2.5" rx="1"/><rect x="17" y="17" width="2.5" height="2.5" rx="1"/><rect x="17" y="4.5" width="2.5" height="2.5" rx="1"/><rect x="4.5" y="17" width="2.5" height="2.5" rx="1"/></svg>
+      <svg class="moon" viewBox="0 0 24 24" fill="#c8d0ff"><path d="M15 3a9 9 0 1 0 6 15.5A8 8 0 0 1 15 3z"/></svg>
+    </button>
+    <button class="chip" id="bRain" aria-label="Rain"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 15a4 4 0 0 1-.6-8A5.5 5.5 0 0 1 17 6.5 4 4 0 0 1 17 15z" fill="currentColor" fill-opacity=".15"/><path d="M8 18l-1 2M12 18l-1 2M16 18l-1 2"/></svg></button>
+    <button class="chip" id="bUndo" aria-label="Undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7L5 11l4 4"/><path d="M5 11h9a5 5 0 0 1 0 10h-2"/></svg></button>
+    <button class="chip" id="bPhoto" aria-label="Photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+    <button class="chip" id="bMenu" aria-label="Menu"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2" opacity=".45"/></svg></button>
+  </div>
+</header>
+
+<div class="rot">
+  <button class="panel" id="rotL" aria-label="Turn left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 3-6.2"/><path d="M4 4v4h4"/></svg></button>
+  <button class="panel" id="rotR" aria-label="Turn right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-3-6.2"/><path d="M20 4v4h-4"/></svg></button>
+</div>
+
+<div id="tray" class="panel"></div>
+
+<nav class="tools panel">
+  <button data-tool="build" class="on"><svg viewBox="0 0 24 24"><path d="M12 3l8 4.5-8 4.5-8-4.5z" fill="#8ad856"/><path d="M4 7.5l8 4.5v9l-8-4.5z" fill="#a87752"/><path d="M20 7.5l-8 4.5v9l8-4.5z" fill="#84593a"/></svg><span>Build</span></button>
+  <button data-tool="dig"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4l6 6"/><path d="M17 7l-8 8"/><path d="M5 13l6 6-2 2c-2 0-6-4-6-6z" fill="currentColor"/></svg><span>Dig</span></button>
+  <button data-tool="water"><svg viewBox="0 0 24 24"><path d="M12 3c3 4 6 7.5 6 11a6 6 0 0 1-12 0c0-3.5 3-7 6-11z" fill="#3cc8ee"/><path d="M9 14a3 3 0 0 0 3 3" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg><span>Water</span></button>
+  <button data-tool="lava"><svg viewBox="0 0 24 24"><path d="M12 2c1 4 6 6 6 12a6 6 0 0 1-12 0c0-3 2-5 3-6 0 2 1 3 2 3 0-3-1-6 1-9z" fill="#ff7a2a"/><path d="M12 13c1.5 1.5 3 2.5 3 4.2a3 3 0 0 1-6 0c0-1.7 1.5-2.7 3-4.2z" fill="#ffcf4a"/></svg><span>Lava</span></button>
+  <button data-tool="plant"><svg viewBox="0 0 24 24"><path d="M12 21v-9" stroke="#7a5a36" stroke-width="2.4" stroke-linecap="round"/><path d="M12 12c0-4 3-7 8-7 0 5-3 7-8 7z" fill="#5bbf4a"/><path d="M12 14c0-3-2.5-5.5-7-5.5 0 4 2.5 5.5 7 5.5z" fill="#8ad856"/></svg><span>Plant</span></button>
+</nav>
+
+<div id="toasts"></div>
+
+<div id="sheet" class="sheet"><div class="body" id="sheetBody"></div></div>
+
+<div id="intro">
+  <div class="card">
+    <h1>Voxel Worlds</h1>
+    <p class="lede">A tiny world that runs on real physics. Water finds its level and spills off the edge, lava creeps and cools, flowers bloom wherever water goes.</p>
+    <div class="tips">
+      <div><b>☝️</b>Tap to build or dig. Hold to pour.</div>
+      <div><b>🌀</b>Drag the sky to spin the island.</div>
+      <div><b>🤏</b>Pinch to zoom, twist to turn.</div>
+    </div>
+    <p class="pick">Pick a world to start</p>
+    <div id="introWorlds"></div>
+  </div>
+</div>
+
+<div id="photo">
+  <img id="photoImg" alt="Snapshot of your world">
+  <p>Long-press the picture to save it, or</p>
+  <div class="row"><a id="photoSave" download="pocket-biomes.png">Download</a><button id="photoClose">Back to world</button></div>
+</div>
+<div id="flash"></div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="storage.js"></script>
+<script src="sim.js"></script>
+<script src="render.js"></script>
+<script src="main.js"></script>
+</body>
+</html>

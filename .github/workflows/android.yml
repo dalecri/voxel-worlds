@@ -1,0 +1,53 @@
+# Builds the Android APK on every push to main and publishes it as the "latest" release,
+# so there's always a ready-to-install voxel-worlds.apk on the Releases page.
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apk
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Install
+        run: npm ci
+
+      - name: Build APK
+        run: npm run apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxel-worlds-apk
+          path: dist/voxel-worlds.apk
+
+      - name: Publish the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest dist/voxel-worlds.apk \
+            --target "${{ github.sha }}" \
+            --title "Voxel Worlds (build ${{ github.run_number }})" \
+            --notes "Debug build of ${{ github.sha }}. On your Android phone: download voxel-worlds.apk, open it, and allow installs from your browser when asked."

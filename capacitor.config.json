@@ -1,0 +1,13 @@
+{
+  "appId": "com.voxelworlds.app",
+  "appName": "Voxel Worlds",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#3cb6a4"
+  },
+  "plugins": {
+    "CapacitorSQLite": {
+      "androidIsEncryption": false
+    }
+  }
+}

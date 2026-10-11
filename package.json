@@ -1,0 +1,27 @@
+{
+  "name": "voxel-worlds",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A cozy isometric voxel sandbox where water and lava follow real physics.",
+  "scripts": {
+    "build": "node scripts/build-www.mjs",
+    "sync": "npm run build && npx cap sync android",
+    "apk": "npm run sync && node scripts/build-apk.mjs",
+    "icons": "npx @capacitor/assets generate --android --iconBackgroundColor '#3cb6a4' --iconBackgroundColorDark '#3cb6a4' --splashBackgroundColor '#3cb6a4' --splashBackgroundColorDark '#161d4c'"
+  },
+  "dependencies": {
+    "@capacitor-community/sqlite": "8.1.1",
+    "@capacitor/android": "8.5.3",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.5.3",
+    "@capacitor/filesystem": "8.1.4",
+    "@capacitor/share": "8.0.3",
+    "@fontsource/fredoka": "5.3.0",
+    "@fontsource/nunito": "5.3.0",
+    "three": "0.160.0"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "3.0.5",
+    "@capacitor/cli": "8.5.3"
+  }
+}
