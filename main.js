@@ -178,7 +178,7 @@ function startVoxelWorlds() {
     lift() { return innerWidth < 760 ? 60 : 70; },
   });
   view.setPhase(meta.phase, true);
-  view.rebuildSolid(); view.rebuildFluids();
+  view.rebuildSolid(); view.snapFluids();
   world.solidDirty = world.fluidDirty = false;
 
   const state = { tool: 'build', block: T.GRASS, plant: 'tree', pour: null, stroke: null };
@@ -476,6 +476,7 @@ function startVoxelWorlds() {
   function doUndo() {
     if (!undo.length) { toast('<span>Nothing to undo</span>', 1200); return; }
     world.restore(undo.pop());
+    view.rebuildSolid(); view.snapFluids();
     Sound.dig();
   }
   $('#bUndo').onclick = doUndo;
@@ -513,6 +514,7 @@ function startVoxelWorlds() {
   function newWorld(k) {
     pushUndo();
     meta.preset = k; world.generate(k); saveMeta(); updateHeader();
+    view.rebuildSolid(); view.snapFluids();
     view.panGoal.set(0, 0, 0); view.zoomGoal = 1;
   }
   function renderMenu() {
@@ -665,7 +667,7 @@ function startVoxelWorlds() {
     rebuildT += dt;
     if (rebuildT > 0.05) {
       if (world.solidDirty) { view.rebuildSolid(); world.solidDirty = false; }
-      if (world.fluidDirty) { view.rebuildFluids(); world.fluidDirty = false; }
+      world.fluidDirty = false;   // the renderer re-meshes fluids every frame
       rebuildT = 0;
     }
 
@@ -679,7 +681,7 @@ function startVoxelWorlds() {
     saveTimer += dt;
     if (saveTimer > 4 && world.changed) { save(); saveTimer = 0; }
 
-    view.frame(dt, t);
+    view.frame(dt, t, Math.min(1, acc / STEP));
     requestAnimationFrame(loop);
   }
 

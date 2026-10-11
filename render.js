@@ -54,52 +54,88 @@
   const OPAQUE = new Uint8Array(32);
   for (let t = 1; t < 32; t++) OPAQUE[t] = isSolid(t) && t !== T.CACTUS && t !== T.LANTERN ? 1 : 0;
 
-  // ---- geometry buffer ----
-  function Buf(wave) { this.p = []; this.n = []; this.c = []; this.w = wave ? [] : null; this.i = []; this.v = 0; }
-  Buf.prototype.quad = function (ps, n, cs, ws, flip) {
-    for (let k = 0; k < 4; k++) {
-      this.p.push(ps[k][0], ps[k][1], ps[k][2]);
-      this.n.push(n[0], n[1], n[2]);
-      this.c.push(cs[k][0], cs[k][1], cs[k][2]);
-      if (this.w) this.w.push(ws ? ws[k] : 0);
-    }
-    const v = this.v;
-    if (flip) this.i.push(v + 1, v + 2, v + 3, v + 1, v + 3, v);
-    else this.i.push(v, v + 1, v + 2, v, v + 2, v + 3);
-    this.v += 4;
-  };
-  Buf.prototype.box = function (x0, y0, z0, x1, y1, z1, col, bottom) {
-    for (let f = 0; f < 6; f++) {
-      if (f === 3 && !bottom) continue;
-      const F = FACES[f];
-      const ps = F.c.map(c => [c[0] ? x1 : x0, c[1] ? y1 : y0, c[2] ? z1 : z0]);
-      const shade = f === 2 ? 1 : 0.92;
-      this.quad(ps, F.n, [mul(col, shade), mul(col, shade), mul(col, shade), mul(col, shade)]);
-    }
-  };
-  Buf.prototype.geometry = function () {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
-    g.setAttribute('normal', new THREE.Float32BufferAttribute(this.n, 3));
-    g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
-    if (this.w) g.setAttribute('aWave', new THREE.Float32BufferAttribute(this.w, 1));
-    g.setIndex(this.v > 65535 ? new THREE.Uint32BufferAttribute(this.i, 1) : new THREE.Uint16BufferAttribute(this.i, 1));
-    g.computeBoundingSphere();
-    return g;
-  };
-
-  // gentle surface swell for fluids, done in the vertex shader
-  function waveMaterial(mat, amp, speed, uTime) {
+  // Fluid surfaces: a gentle swell in the vertex shader, plus bright bands that
+  // stream down falling water (aFlow) so waterfalls read as moving.
+  function fluidMaterial(mat, key, amp, speed, uTime, flow) {
     mat.onBeforeCompile = sh => {
       sh.uniforms.uTime = uTime;
-      sh.vertexShader = 'attribute float aWave;\nuniform float uTime;\n' + sh.vertexShader.replace('#include <begin_vertex>',
+      sh.vertexShader = 'attribute float aWave;\nattribute float aFlow;\nuniform float uTime;\nvarying float vFlow;\nvarying float vWy;\n' +
+        sh.vertexShader.replace('#include <begin_vertex>',
         `#include <begin_vertex>
          float wv = sin(uTime * ${speed.toFixed(2)} + position.x * 1.9 + position.z * 1.3) * 0.5
                   + sin(uTime * ${(speed * 0.63).toFixed(2)} - position.x * 0.8 + position.z * 2.2) * 0.5;
-         transformed.y += aWave * (wv * ${amp.toFixed(3)} - ${amp.toFixed(3)});`);
+         transformed.y += aWave * (wv * ${amp.toFixed(3)} - ${amp.toFixed(3)});
+         vFlow = aFlow; vWy = position.y + position.x * 0.13 + position.z * 0.07;`);
+      if (flow) {
+        sh.fragmentShader = 'uniform float uTime;\nvarying float vFlow;\nvarying float vWy;\n' + sh.fragmentShader.replace('#include <opaque_fragment>',
+          `#include <opaque_fragment>
+           float band = 0.5 + 0.5 * sin(vWy * 6.0 + uTime * ${flow.toFixed(1)});
+           gl_FragColor.rgb += vFlow * band * band * 0.22;`);
+      }
     };
+    mat.customProgramCacheKey = () => key;
     return mat;
   }
+
+  // Growable typed-array buffer for meshes rebuilt every frame (no garbage per frame)
+  function FBuf() { this.cap = 0; this.grow(4096); this.v = 0; this.ni = 0; }
+  FBuf.prototype.grow = function (verts) {
+    const keep = this.cap ? { p: this.p, n: this.n, c: this.c, w: this.w, f: this.f, i: this.i } : null;
+    this.cap = verts;
+    this.p = new Float32Array(verts * 3); this.n = new Float32Array(verts * 3); this.c = new Float32Array(verts * 3);
+    this.w = new Float32Array(verts); this.f = new Float32Array(verts); this.i = new Uint32Array(Math.ceil(verts * 1.5));
+    if (keep) { this.p.set(keep.p); this.n.set(keep.n); this.c.set(keep.c); this.w.set(keep.w); this.f.set(keep.f); this.i.set(keep.i); }
+    this.geo = null;
+  };
+  FBuf.prototype.reset = function () { this.v = 0; this.ni = 0; };
+  // corners: 4 [x,y,z]; col: [r,g,b] per corner or one; wave/flow: per-corner arrays or numbers
+  FBuf.prototype.quad = function (ps, n, cols, ws, fs, flip) {
+    if (this.v + 4 > this.cap) this.grow(this.cap * 2);
+    const v = this.v;
+    for (let k = 0; k < 4; k++) {
+      const o = (v + k) * 3, c = typeof cols[0] === 'number' ? cols : cols[k];
+      this.p[o] = ps[k][0]; this.p[o + 1] = ps[k][1]; this.p[o + 2] = ps[k][2];
+      this.n[o] = n[0]; this.n[o + 1] = n[1]; this.n[o + 2] = n[2];
+      this.c[o] = c[0]; this.c[o + 1] = c[1]; this.c[o + 2] = c[2];
+      this.w[v + k] = ws ? (ws.length ? ws[k] : ws) : 0;
+      this.f[v + k] = fs ? (fs.length ? fs[k] : fs) : 0;
+    }
+    const I = this.i, o = this.ni;
+    if (flip) { I[o] = v + 1; I[o + 1] = v + 2; I[o + 2] = v + 3; I[o + 3] = v + 1; I[o + 4] = v + 3; I[o + 5] = v; }
+    else { I[o] = v; I[o + 1] = v + 1; I[o + 2] = v + 2; I[o + 3] = v; I[o + 4] = v + 2; I[o + 5] = v + 3; }
+    this.ni += 6; this.v += 4;
+  };
+  FBuf.prototype.box = function (x0, y0, z0, x1, y1, z1, col, fl, topWave) {
+    for (let f = 0; f < 6; f++) {
+      if (f === 3) continue;
+      const F = FACES[f];
+      const ps = F.c.map(c => [c[0] ? x1 : x0, c[1] ? y1 : y0, c[2] ? z1 : z0]);
+      this.quad(ps, F.n, f === 2 ? col : mul(col, 0.92), f === 2 ? (topWave || 0) : F.c.map(c => (c[1] ? topWave || 0 : 0)), f === 2 ? 0 : fl);
+    }
+  };
+  // push into a mesh, reusing GPU buffers while they fit
+  FBuf.prototype.apply = function (mesh) {
+    let g = this.geo;
+    if (!g) {
+      g = this.geo = new THREE.BufferGeometry();
+      const dyn = (a, s) => new THREE.BufferAttribute(a, s).setUsage(THREE.DynamicDrawUsage);
+      g.setAttribute('position', dyn(this.p, 3)); g.setAttribute('normal', dyn(this.n, 3));
+      g.setAttribute('color', dyn(this.c, 3)); g.setAttribute('aWave', dyn(this.w, 1));
+      g.setAttribute('aFlow', dyn(this.f, 1)); g.setIndex(dyn(this.i, 1));
+      g.boundingSphere = new THREE.Sphere(new THREE.Vector3(W / 2, H / 2, D / 2), 40);
+    }
+    for (const k of ['position', 'normal', 'color', 'aWave', 'aFlow']) {
+      const a = g.attributes[k];
+      a.needsUpdate = true;
+      a.clearUpdateRanges && a.clearUpdateRanges();
+      a.addUpdateRange ? a.addUpdateRange(0, this.v * a.itemSize) : (a.updateRange = { offset: 0, count: this.v * a.itemSize });
+    }
+    g.index.needsUpdate = true;
+    g.index.clearUpdateRanges && g.index.clearUpdateRanges();
+    g.index.addUpdateRange ? g.index.addUpdateRange(0, this.ni) : (g.index.updateRange = { offset: 0, count: this.ni });
+    g.setDrawRange(0, this.ni);
+    [].concat(mesh).forEach(m => { if (m.geometry !== g) { m.geometry.dispose(); m.geometry = g; } });
+  };
 
   // ---- particles: square sprites read as tiny voxels ----
   function Particles(max, additive) {
@@ -226,16 +262,36 @@
     this.uTime = { value: 0 };
     this.solidMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.glowMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-    this.waterMat = waveMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false, emissive: 0x06506a, emissiveIntensity: 0.4 }), 0.045, 1.8, this.uTime);
-    this.lavaMat = waveMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0xff3c00, emissiveIntensity: 0.55 }), 0.03, 0.9, this.uTime);
+    this.waterMat = fluidMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.88, depthWrite: false,
+      emissive: 0x06506a, emissiveIntensity: 0.4 }), 'water', 0.045, 1.8, this.uTime, 9);
+    // depth-only pass: lets the translucent water show only its front-most surface,
+    // so back faces and inner walls never shimmer through
+    this.waterDepthMat = fluidMaterial(new THREE.MeshBasicMaterial({ colorWrite: false, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
+      'waterDepth', 0.045, 1.8, this.uTime, 0);
+    this.lavaMat = fluidMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0xff3c00, emissiveIntensity: 0.55 }), 'lava', 0.03, 0.9, this.uTime, 3);
     this.meshes = {};
-    ['solid', 'glow', 'water', 'lava'].forEach(k => {
+    ['solid', 'glow', 'waterDepth', 'water', 'lava'].forEach(k => {
       const m = new THREE.Mesh(new THREE.BufferGeometry(), this[k + 'Mat']);
       m.frustumCulled = false;
-      m.castShadow = k === 'solid'; m.receiveShadow = k !== 'glow';
+      m.castShadow = k === 'solid'; m.receiveShadow = k === 'solid' || k === 'water' || k === 'lava';
+      if (k === 'waterDepth') m.renderOrder = 1;
       if (k === 'water') m.renderOrder = 2;
       this.meshes[k] = m; this.root.add(m);
     });
+    this.waterBuf = new FBuf(); this.lavaBuf = new FBuf();
+
+    // smoothed copies of the simulation so levels glide instead of stepping each tick
+    this.dm = new Float32Array(PB.N);       // displayed amount
+    this.df = new Uint8Array(PB.N);         // displayed fluid type
+    this.dFall = new Float32Array(PB.N);    // displayed inflow from above (foam)
+    this.dEdge = new Float32Array(PB.N);    // displayed outflow over the island edge
+
+    // blocks in mid-fall (sand), drawn between simulation ticks
+    this.fallMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial(), 256);
+    this.fallMesh.castShadow = this.fallMesh.receiveShadow = true;
+    this.fallMesh.frustumCulled = false;
+    this.fallMesh.count = 0;
+    this.root.add(this.fallMesh);
 
     // a soft shadow beneath the floating island
     const sh = document.createElement('canvas'); sh.width = sh.height = 128;
@@ -378,53 +434,65 @@
 
   // =================================================================
   // Meshing
+  // per face and corner: the three neighbours (side, side, diagonal) that darken it
+  const AO_OFF = FACES.map(F => {
+    const ax = F.n[0] ? 0 : F.n[1] ? 1 : 2, u = (ax + 1) % 3, v = (ax + 2) % 3;
+    return F.c.map(c => {
+      const du = c[u] ? 1 : -1, dv = c[v] ? 1 : -1;
+      const a = F.n.slice(), b = F.n.slice(), d = F.n.slice();
+      a[u] += du; b[v] += dv; d[u] += du; d[v] += dv;
+      return [a, b, d];
+    });
+  });
+
   R.rebuildSolid = function () {
     const w = this.world, type = w.type;
-    const buf = new Buf(false), glow = new Buf(false);
-    const op = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < W && y < H && z < D && OPAQUE[type[x + z * W + y * W * D]];
+    if (!this.solidBuf) { this.solidBuf = new FBuf(); this.glowBuf = new FBuf(); }
+    const buf = this.solidBuf, glow = this.glowBuf;
+    buf.reset(); glow.reset();
+    const L = W * D;
+    const op = (x, y, z) => (x >= 0 && y >= 0 && z >= 0 && x < W && y < H && z < D && OPAQUE[type[x + z * W + y * L]]) | 0;
     const S = this.surfaces; S.vents = []; S.lanterns = []; S.grass = [];
+    const br = [0, 0, 0, 0], ps = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], cs = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    const setC = (k, c, b) => { cs[k][0] = c[0] * b; cs[k][1] = c[1] * b; cs[k][2] = c[2] * b; };
 
     for (let y = 0; y < H; y++) for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
-      const t = type[x + z * W + y * W * D];
+      const t = type[x + z * W + y * L];
       if (!t) continue;
       if (!OPAQUE[t]) { this.decor(buf, glow, t, x, y, z, op); continue; }
-      if (t === T.GRASS && !op(x, y + 1, z)) S.grass.push([x, y, z]);
+      const openAbove = !op(x, y + 1, z);
+      if (t === T.GRASS && openAbove) S.grass.push([x, y, z]);
       if (t === T.VENT) S.vents.push([x, y, z]);
       for (let f = 0; f < 6; f++) {
         if (f === 3 && y === 0) continue;
         const F = FACES[f];
         if (op(x + F.n[0], y + F.n[1], z + F.n[2])) continue;
-        // ambient occlusion per corner
-        const ax = F.n[0] ? 0 : F.n[1] ? 1 : 2, u = (ax + 1) % 3, v = (ax + 2) % 3;
-        const br = [0, 0, 0, 0];
+        const AOf = AO_OFF[f];
         for (let k = 0; k < 4; k++) {
+          const [a, b, d] = AOf[k];
+          const s1 = op(x + a[0], y + a[1], z + a[2]), s2 = op(x + b[0], y + b[1], z + b[2]);
+          br[k] = AO[s1 && s2 ? 0 : 3 - (s1 + s2 + op(x + d[0], y + d[1], z + d[2]))];
           const c = F.c[k];
-          const p = [x + F.n[0], y + F.n[1], z + F.n[2]];
-          const du = c[u] ? 1 : -1, dv = c[v] ? 1 : -1;
-          const a = p.slice(); a[u] += du;
-          const b = p.slice(); b[v] += dv;
-          const cc = p.slice(); cc[u] += du; cc[v] += dv;
-          const s1 = op(a[0], a[1], a[2]), s2 = op(b[0], b[1], b[2]), s3 = op(cc[0], cc[1], cc[2]);
-          br[k] = AO[s1 && s2 ? 0 : 3 - (s1 + s2 + s3)];
+          ps[k][0] = x + c[0]; ps[k][1] = y + c[1]; ps[k][2] = z + c[2];
         }
-        const flip = br[0] + br[2] < br[1] + br[3];
-        const ps = F.c.map(c => [x + c[0], y + c[1], z + c[2]]);
         const col = this.faceColor(t, x, y, z, f);
         const target = (t === T.VENT && f === 2) ? glow : buf;
-        if (col.band && f !== 2 && f !== 3 && !op(x, y + 1, z)) {
+        if (col.band && f !== 2 && f !== 3 && openAbove) {
           // grass and snow wrap a lip over the side, like the reference
           const k = 1 - col.band;
-          const lp = (a, b) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
-          const m0 = lp(ps[0], ps[3]), m1 = lp(ps[1], ps[2]);
+          const m0 = [ps[0][0], ps[0][1] + k, ps[0][2]], m1 = [ps[1][0], ps[1][1] + k, ps[1][2]];
           const b0 = br[0] + (br[3] - br[0]) * k, b1 = br[1] + (br[2] - br[1]) * k;
-          target.quad([ps[0], ps[1], m1, m0], F.n, [mul(col.c, br[0]), mul(col.c, br[1]), mul(col.c, b1), mul(col.c, b0)]);
-          target.quad([m0, m1, ps[2], ps[3]], F.n, [mul(col.top, b0), mul(col.top, b1), mul(col.top, br[2]), mul(col.top, br[3])]);
+          setC(0, col.c, br[0]); setC(1, col.c, br[1]); setC(2, col.c, b1); setC(3, col.c, b0);
+          target.quad([ps[0], ps[1], m1, m0], F.n, cs);
+          setC(0, col.top, b0); setC(1, col.top, b1); setC(2, col.top, br[2]); setC(3, col.top, br[3]);
+          target.quad([m0, m1, ps[2], ps[3]], F.n, cs);
         } else {
-          target.quad(ps, F.n, br.map(b => mul(col.c, b)), null, flip);
+          for (let k = 0; k < 4; k++) setC(k, col.c, br[k]);
+          target.quad(ps, F.n, cs, 0, 0, br[0] + br[2] < br[1] + br[3]);
         }
       }
     }
-    this.swap('solid', buf); this.swap('glow', glow);
+    buf.apply(this.meshes.solid); glow.apply(this.meshes.glow);
     // column heights for rain
     for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) this.heights[x + z * W] = w.topY(x, z);
   };
@@ -497,85 +565,176 @@
     }
   };
 
-  R.rebuildFluids = function () {
+  // Ease the displayed fluid toward the simulation, so levels glide between ticks.
+  R.smoothFluids = function (dt) {
     const w = this.world, { fluid, mass, type } = w;
-    const wb = new Buf(true), lb = new Buf(true);
+    const dm = this.dm, df = this.df, dFall = this.dFall, dEdge = this.dEdge;
+    const k = 1 - Math.exp(-dt * 8), kf = 1 - Math.exp(-dt * 4);
+    let any = false;
+    for (let i = 0; i < PB.N; i++) {
+      const f = fluid[i];
+      if (!f && !df[i]) continue;
+      if (isSolid(type[i])) { df[i] = 0; dm[i] = dFall[i] = dEdge[i] = 0; continue; }
+      if (f && df[i] !== f) { df[i] = f; dm[i] = 0; }
+      const target = f ? Math.min(1.05, mass[i]) : 0;
+      dm[i] += (target - dm[i]) * k;
+      dFall[i] += ((f ? w.fallIn[i] : 0) - dFall[i]) * kf;
+      dEdge[i] += ((f ? w.edgeOut[i] : 0) - dEdge[i]) * kf;
+      if (!f && dm[i] < 0.012) { df[i] = 0; dm[i] = dFall[i] = dEdge[i] = 0; continue; }
+      any = true;
+    }
+    return any;
+  };
+
+  R.rebuildFluids = function () {
+    const w = this.world, type = w.type, dm = this.dm, df = this.df, dFall = this.dFall, dEdge = this.dEdge;
+    const wb = this.waterBuf, lb = this.lavaBuf;
+    wb.reset(); lb.reset();
     const S = this.surfaces; S.water = []; S.lava = [];
-    const at = (x, y, z) => x + z * W + y * W * D;
-    const inB = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < W && y < H && z < D;
-    const surf = (i, f) => {
-      if (i + W * D < fluid.length && fluid[i + W * D] === f) return 1;
-      return Math.max(0.08, Math.min(1, mass[i]));
-    };
+    const L = W * D;
+    const has = (i, f) => df[i] === f && dm[i] > 0.012;
+    const coveredAt = (i, f, y) => y + 1 < H && has(i + L, f);
+    // a cell under more fluid counts as full only once it really is (a stream landing in a puddle stays shallow)
+    const isFull = (i, f, y) => coveredAt(i, f, y) && dm[i] > 0.9;
+    const hOf = (i, f, y) => (isFull(i, f, y) ? 1 : Math.max(0.05, Math.min(1, dm[i])));
+    // a corner's height is shared by the (up to) four cells around it, so neighbouring surfaces meet exactly
     const corner = (x, y, z, cx, cz, f) => {
       let s = 0, n = 0;
       for (let dz = cz - 1; dz <= cz; dz++) for (let dx = cx - 1; dx <= cx; dx++) {
         const xx = x + dx, zz = z + dz;
         if (xx < 0 || zz < 0 || xx >= W || zz >= D) continue;
-        const i = at(xx, y, zz);
-        if (fluid[i] !== f) continue;
-        const hh = surf(i, f);
-        if (hh >= 1) return 1;
-        s += hh; n++;
+        const i = xx + zz * W + y * L;
+        if (!has(i, f)) continue;
+        s += hOf(i, f, y); n++;
       }
-      return n ? s / n : 0.1;
+      return n ? s / n : 0.05;
     };
+    const SIDES = [[1, 0, 0], [-1, 0, 1], [0, 1, 4], [0, -1, 5]];   // dx, dz, face index
 
     for (let y = 0; y < H; y++) for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
-      const i = at(x, y, z), f = fluid[i];
-      if (!f) continue;
+      const i = x + z * W + y * L, f = df[i];
+      if (!f || dm[i] <= 0.012) continue;
       const buf = f === WATER ? wb : lb;
-      const above = y + 1 < H ? at(x, y + 1, z) : -1;
-      const covered = above >= 0 && fluid[above] === f;
-      const below = y > 0 ? at(x, y - 1, z) : -1;
-      const falling = below < 0 || (!isSolid(type[below]) && (!fluid[below] || mass[below] < 0.9));
-      // colour
+      const fed = coveredAt(i, f, y);            // something pours in from above
+      const covered = fed && dm[i] > 0.9;
+      const below = y > 0 ? i - L : -1;
+      const belowSolid = below >= 0 && OPAQUE[type[below]];
+      const belowFull = below >= 0 && has(below, f) && dm[below] > 0.9;
+      const falling = !belowSolid && !belowFull;
+      const m = Math.min(1, dm[i]);
+
       let col;
       if (f === WATER) {
-        let depth = 0;
-        for (let k = 1; k <= 3 && y - k >= 0 && fluid[at(x, y - k, z)] === WATER; k++) depth++;
-        col = mix(P.waterShallow, P.water, depth / 3);
-        if (falling || covered && mass[i] < 0.95) col = mix(col, P.foam, 0.45);
+        let d = 0;
+        for (let k = 1; k <= 3 && y - k >= 0; k++) { const j = i - k * L; if (!has(j, f)) break; d += Math.min(1, dm[j]); }
+        col = mix(P.waterShallow, P.water, Math.min(1, (d + m) / 3.2));
+        col = mix(col, P.foam, Math.min(0.6, dFall[i] * 2.5 + (falling ? 0.28 : 0)));
       } else {
         const r = hash3(x, y, z, 11);
-        col = r < 0.2 ? P.lavaCrust : mix(P.lava, P.lavaHot, r);
+        col = r < 0.2 && !falling ? P.lavaCrust : mix(P.lava, P.lavaHot, falling ? 0.8 : r);
       }
-      const hgt = [corner(x, y, z, 0, 0, f), corner(x, y, z, 1, 0, f), corner(x, y, z, 1, 1, f), corner(x, y, z, 0, 1, f)];
-      const hAt = (cx, cz) => hgt[cx ? (cz ? 2 : 1) : (cz ? 3 : 0)];
+      const flow = Math.min(1, dFall[i] * 5 + (falling ? 0.7 : 0));
 
-      // top surface
-      if (!covered && !(above >= 0 && OPAQUE[type[above]] && mass[i] > 0.95)) {
+      // tops of the four corners (x0z0, x1z0, x1z1, x0z1)
+      let h = covered ? [1, 1, 1, 1] : [corner(x, y, z, 0, 0, f), corner(x, y, z, 1, 0, f), corner(x, y, z, 1, 1, f), corner(x, y, z, 0, 1, f)];
+      // where a stream starts to fall, give it some body instead of a flat sliver
+      if (falling && !covered) h = h.map(v => Math.max(v, Math.min(0.6, 0.15 + m * 3)));
+      const hAt = (cx, cz) => h[cx ? (cz ? 2 : 1) : (cz ? 3 : 0)];
+      // a falling trickle narrows to a stream, except where it joins neighbouring fluid
+      const wd = falling ? Math.max(0.34, Math.min(1, 0.26 + 1.4 * Math.sqrt(m))) : 1;
+      const ins = (1 - wd) / 2;
+      const nb = SIDES.map(([dx, dz]) => {
+        const xx = x + dx, zz = z + dz;
+        if (xx < 0 || zz < 0 || xx >= W || zz >= D) return 0;
+        const j = i + dx + dz * W;
+        return OPAQUE[type[j]] ? 2 : has(j, f) ? 1 : 0;   // 2 solid, 1 same fluid, 0 open
+      });
+      // narrow only on open sides: a stream joins neighbouring water and clings to walls
+      const x0 = x + (falling && nb[1] === 0 ? ins : 0), x1 = x + 1 - (falling && nb[0] === 0 ? ins : 0);
+      const z0 = z + (falling && nb[3] === 0 ? ins : 0), z1 = z + 1 - (falling && nb[2] === 0 ? ins : 0);
+      const px = c => (c ? x1 : x0), pz = c => (c ? z1 : z0);
+      const wave = covered ? 0 : 1;
+
+      // top
+      if (!covered && !(y + 1 < H && OPAQUE[type[i + L]] && m > 0.97)) {
         const F = FACES[2];
-        const ps = F.c.map(c => [x + c[0], y + hAt(c[0], c[2]), z + c[2]]);
-        buf.quad(ps, F.n, [col, col, col, col], [1, 1, 1, 1]);
-        if (f === WATER) S.water.push([x + 0.5, y + mass[i], z + 0.5]); else S.lava.push([x + 0.5, y + Math.min(1, mass[i]), z + 0.5]);
+        buf.quad(F.c.map(c => [px(c[0]), y + hAt(c[0], c[2]), pz(c[2])]), F.n, col, wave, Math.min(0.5, dFall[i] * 3));
+        (f === WATER ? S.water : S.lava).push([x + 0.5, y + m, z + 0.5]);
       }
       // sides
-      for (const fi of [0, 1, 4, 5]) {
-        const F = FACES[fi];
-        const nx = x + F.n[0], nz = z + F.n[2];
-        if (inB(nx, y, nz)) {
-          const j = at(nx, y, nz);
-          if (OPAQUE[type[j]] || fluid[j] === f) continue;
+      const sc = mul(col, 0.9);
+      for (let s = 0; s < 4; s++) {
+        if (nb[s] === 2) continue;
+        const F = FACES[SIDES[s][2]];
+        const tops = F.c.map(c => hAt(c[0], c[2]));
+        let bots = [0, 0, 0, 0];
+        if (nb[s] === 1) {
+          // only the part of this cell that stands above its neighbour (e.g. the lip of a falling column)
+          const j = i + SIDES[s][0] + SIDES[s][1] * W;
+          if (!coveredAt(j, f, y) && covered) bots = F.c.map(c => corner(x, y, z, c[0], c[2], f));
+          else continue;
         }
-        const ps = F.c.map(c => [x + c[0], y + (c[1] ? hAt(c[0], c[2]) : 0), z + c[2]]);
-        const ws = F.c.map(c => (c[1] && !covered ? 1 : 0));
-        const sc = mul(col, 0.92);
-        buf.quad(ps, F.n, [sc, sc, sc, sc], ws);
+        const ps = F.c.map((c, k) => [px(c[0]), y + (c[1] ? tops[k] : bots[k]), pz(c[2])]);
+        if (ps[3][1] - ps[0][1] < 0.01 && ps[2][1] - ps[1][1] < 0.01) continue;
+        buf.quad(ps, F.n, sc, F.c.map(c => (c[1] ? wave : 0)), flow);
       }
-      // underside of a falling sheet
-      if (below >= 0 && !OPAQUE[type[below]] && fluid[below] !== f) {
+      // the stream from above entering this shallow cell
+      if (fed && !covered) {
+        const ma = Math.min(1, dm[i + L]);
+        const wa = Math.max(0.34, Math.min(1, 0.26 + 1.4 * Math.sqrt(ma)));
+        const a = (1 - wa) / 2, base = y + Math.min(h[0], h[1], h[2], h[3]) - 0.02;
+        const fc = mix(col, P.foam, f === WATER ? 0.3 : 0);
+        for (let s = 0; s < 4; s++) {
+          if (nb[s] === 2) continue;
+          const F = FACES[SIDES[s][2]];
+          const ps = F.c.map(c => [x + (c[0] ? 1 - a : a), c[1] ? y + 1 : base, z + (c[2] ? 1 - a : a)]);
+          buf.quad(ps, F.n, mul(fc, 0.9), 0, 1);
+        }
+      }
+      // underside of a stream hanging in the air
+      if (below >= 0 && !belowSolid && !has(below, f)) {
         const F = FACES[3];
-        buf.quad(F.c.map(c => [x + c[0], y, z + c[2]]), F.n, [col, col, col, col]);
+        buf.quad(F.c.map(c => [px(c[0]), y, pz(c[2])]), F.n, col, 0, flow);
+      }
+
+      // a sheet of water pouring over the island's edge, down its side
+      if (dEdge[i] > 0.0015 && !covered) {
+        const ww = Math.max(0.35, Math.min(1, 0.35 + dEdge[i] * 22));
+        const top = y + Math.min(hAt(0, 0), hAt(1, 1)) - 0.02, bot = -1.2;
+        const fc = mix(col, f === WATER ? P.foam : P.lavaHot, 0.35);
+        for (let s = 0; s < 4; s++) {
+          const [dx, dz, fi] = SIDES[s];
+          const xx = x + dx, zz = z + dz;
+          if (!(xx < 0 || zz < 0 || xx >= W || zz >= D)) continue;
+          const F = FACES[fi], o = 0.04, a = (1 - ww) / 2;
+          const ps = F.c.map(c => {
+            const ex = dx ? (dx > 0 ? x + 1 + o : x - o) : x + (c[0] ? 1 - a : a);
+            const ez = dz ? (dz > 0 ? z + 1 + o : z - o) : z + (c[2] ? 1 - a : a);
+            return [ex, c[1] ? top : bot, ez];
+          });
+          buf.quad(ps, F.n, [fc, fc, col, col], 0, 1);
+        }
       }
     }
-    this.swap('water', wb); this.swap('lava', lb);
+    wb.apply([this.meshes.waterDepth, this.meshes.water]);
+    lb.apply(this.meshes.lava);
   };
 
-  R.swap = function (k, buf) {
-    const m = this.meshes[k];
-    m.geometry.dispose();
-    m.geometry = buf.geometry();
+  // falling sand and friends, placed between simulation ticks
+  R.updateFalling = function (alpha) {
+    const list = this.world.falling, m = this.fallMesh;
+    const M = new THREE.Matrix4(), c = new THREE.Color();
+    m.count = Math.min(list.length, 256);
+    for (let k = 0; k < m.count; k++) {
+      const e = list[k];
+      const y = e.py + (e.y - e.py) * alpha;
+      M.makeTranslation(e.x + 0.5, y + 0.5, e.z + 0.5);
+      m.setMatrixAt(k, M);
+      const fc = this.faceColor(e.t, e.x, 0, e.z, 2).c;
+      m.setColorAt(k, c.setRGB(fc[0], fc[1], fc[2]));
+    }
+    m.instanceMatrix.needsUpdate = true;
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
   };
 
   // =================================================================
@@ -702,8 +861,22 @@
   };
 
   // =================================================================
-  R.frame = function (dt, t) {
+  // jump the displayed fluid straight to the simulation (new world, undo, load)
+  R.snapFluids = function () {
+    const w = this.world;
+    for (let i = 0; i < PB.N; i++) {
+      this.df[i] = w.fluid[i]; this.dm[i] = w.fluid[i] ? Math.min(1.05, w.mass[i]) : 0;
+      this.dFall[i] = w.fallIn[i]; this.dEdge[i] = w.edgeOut[i];
+    }
+    this.rebuildFluids();
+  };
+
+  R.frame = function (dt, t, alpha) {
     this.uTime.value = t;
+    const anyFluid = this.smoothFluids(dt);
+    if (anyFluid || this.hadFluid) this.rebuildFluids();
+    this.hadFluid = anyFluid;
+    this.updateFalling(alpha || 0);
     if (this.phaseT < 1) { this.phaseT = Math.min(1, this.phaseT + dt / 2.5); this.applyPhase(this.phaseT); }
 
     // camera easing

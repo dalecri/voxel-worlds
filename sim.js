@@ -66,6 +66,9 @@
     this.mass = new Float32Array(N);
     this.nm = new Float32Array(N);
     this.claim = new Uint8Array(N);
+    this.fallIn = new Float32Array(N);   // fluid that poured in from above last tick (renderer: foam)
+    this.edgeOut = new Float32Array(N);  // fluid that poured over the island edge last tick
+    this.falling = [];                   // blocks in mid-air: { x, z, y, py, vy, t }
     this.events = [];
     this.tick = 0;
     this.raining = false;
@@ -135,8 +138,9 @@
   // Fluid flow, one fluid at a time, double-buffered through `nm`
   P.flow = function (f) {
     const { type, fluid, mass, nm, claim } = this;
-    const cfg = FL[f];
+    const cfg = FL[f], { fallIn, edgeOut } = this;
     nm.set(mass);
+    for (let i = 0; i < N; i++) if (fluid[i] === f || !fluid[i]) { fallIn[i] = 0; edgeOut[i] = 0; }
     let fall = 0, spill = 0;
     for (let y = 0; y < H; y++) for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
       const i = x + z * W + y * WD;
@@ -157,6 +161,7 @@
           fl = Math.max(0, Math.min(fl, cfg.maxSpeed, rem));
           if (fl > 0) {
             nm[i] -= fl; nm[j] += fl; rem -= fl;
+            fallIn[j] += fl;
             if (!fluid[j]) claim[j] = f;
             if (mass[j] < 0.98 || (y > 1 && !isSolid(type[j - WD]) && !fluid[j - WD])) fall += fl;
             if (mass[j] > 0.5 && fl > 0.08 && this.rand() < 0.05) this.emit('splash', x + 0.5, y, z + 0.5, f);
@@ -174,6 +179,7 @@
             const fl = Math.min(rem, rem * 0.25 * cfg.spread);
             if (fl > 0.001) {
               nm[i] -= fl; rem -= fl; spill += fl;
+              edgeOut[i] += fl;
               if (this.rand() < fl * 4) this.emit('spill', x + 0.5 + DIRS4[d][0] * 0.55, y + Math.min(1, mass[i]) * 0.9, z + 0.5 + DIRS4[d][1] * 0.55, f);
             }
             continue;
@@ -192,8 +198,9 @@
       // 3. pressure pushes the excess up
       const j = i + WD;
       if (!isSolid(type[j]) && (fluid[j] === 0 || fluid[j] === f)) {
-        let fl = rem - stable(rem + mass[j]);
-        if (fl > 0.1) fl *= 0.5;
+        // pushed up gently (half the excess per tick) so pools don't boil up and down
+        let fl = (rem - stable(rem + mass[j])) * 0.5;
+        if (fl < 0.01 && !fluid[j]) fl = 0;      // no wisps of water over a full cell
         fl = Math.max(0, Math.min(fl, cfg.maxSpeed, rem));
         if (fl > 0) { nm[i] -= fl; nm[j] += fl; if (!fluid[j]) claim[j] = f; }
       }
@@ -236,24 +243,18 @@
 
       // vents erupt in pulses: about 25s on, 35s resting
       if (t === T.SPRING || (t === T.VENT && lavaTick && this.tick % 900 < 380)) {
-        const f = t === T.SPRING ? WATER : LAVA, rate = f === WATER ? 0.3 : 0.14;
+        const f = t === T.SPRING ? WATER : LAVA, rate = f === WATER ? 0.12 : 0.14;
         // sources push a little past full, so the pressure lifts whatever sits above
-        if (y < H - 1 && this.canHold(i + WD, f)) this.addFluid(x, y + 1, z, f, rate, 1.25);
+        if (y < H - 1 && this.canHold(i + WD, f)) this.addFluid(x, y + 1, z, f, rate, 1.06);
         else for (const [dx, dz] of DIRS4) this.addFluid(x + dx, y, z + dz, f, rate / 3, 1.1);
         continue;
       }
 
-      if (FALLS[t] && sandTick && y > 0) {
-        const j = i - WD;
-        if (!isSolid(type[j])) {
-          // sand sinks through fluid, the fluid swaps up into its place
-          type[j] = t; type[i] = T.AIR;
-          fluid[i] = fluid[j]; mass[i] = mass[j];
-          fluid[j] = 0; mass[j] = 0;
-          this.solidDirty = this.fluidDirty = this.changed = true;
-          if (y > 1 && isSolid(type[j - WD])) this.emit('thud', x + 0.5, y - 1, z + 0.5, t);
-          this.sandSlid = true;
-        }
+      if (FALLS[t] && y > 0 && !isSolid(type[i - WD])) {
+        // unsupported: it lets go of the grid and falls freely until it lands
+        type[i] = T.AIR;
+        this.falling.push({ x, z, y, py: y, vy: 0, t });
+        this.solidDirty = this.changed = true;
         continue;
       }
 
@@ -451,10 +452,42 @@
   };
 
   // ---------------------------------------------------------------
+  // Free-falling blocks: real acceleration, slowed by water, settling back into the grid
+  P.updateFalling = function (dt) {
+    if (!this.falling.length) return;
+    const keep = [];
+    for (const e of this.falling) {
+      e.py = e.y;
+      const cy = Math.floor(e.y + 0.5);
+      const wet = cy >= 0 && cy < H && this.fluid[idx(e.x, cy, e.z)];
+      e.vy = Math.min(e.vy + 28 * dt, wet ? 3.5 : 16);
+      if (wet) e.vy *= 0.85;
+      const ny = e.y - e.vy * dt;
+      const by = Math.floor(ny);
+      if (by >= 0 && by < H && isSolid(this.type[idx(e.x, by, e.z)])) {
+        // landed on top of cell `by`
+        let ly = by + 1;
+        while (ly < H && isSolid(this.type[idx(e.x, ly, e.z)])) ly++;
+        if (ly < H) {
+          e.y = e.py = ly;
+          this.set(e.x, ly, e.z, e.t);
+          if (e.vy > 4) this.emit('thud', e.x + 0.5, ly, e.z + 0.5, e.t);
+          this.sandSlid = true;
+        }
+        continue;
+      }
+      if (ny < -8) continue;                 // fell off the bottom of the world
+      e.y = ny;
+      keep.push(e);
+    }
+    this.falling = keep;
+  };
+
   P.step = function () {
     this.tick++;
     const lavaTick = this.tick % 3 === 0;
     this.cellPass(lavaTick, this.tick % 2 === 0);
+    this.updateFalling(1 / 15);
     this.flow(WATER);
     if (lavaTick) this.flow(LAVA);
     if (this.raining) this.rain(4);
@@ -486,11 +519,17 @@
   };
   P.serialize = function () {
     const q = new Uint8Array(N);
+    const types = this.type.slice();
+    for (const e of this.falling) {           // a block in mid-air is saved where it is
+      const y = Math.round(e.y);
+      if (y >= 0 && y < H && !isSolid(types[idx(e.x, y, e.z)])) types[idx(e.x, y, e.z)] = e.t;
+    }
     for (let i = 0; i < N; i++) q[i] = Math.min(255, Math.round(this.mass[i] * 200));
-    return { v: 1, w: W, d: D, h: H, t: b64.enc(this.type), f: b64.enc(this.fluid), m: b64.enc(q),
+    return { v: 1, w: W, d: D, h: H, t: b64.enc(types), f: b64.enc(this.fluid), m: b64.enc(q),
       sap: this.saplings.map(s => [s.x, s.y, s.z, s.kind || '']) };
   };
   P.load = function (o) {
+    this.falling = [];
     if (!o || o.v !== 1 || o.w !== W || o.d !== D || o.h !== H) return false;
     const t = b64.dec(o.t), f = b64.dec(o.f), m = b64.dec(o.m);
     if (t.length !== N || f.length !== N || m.length !== N) return false;
@@ -505,11 +544,13 @@
     return { type: this.type.slice(), fluid: this.fluid.slice(), mass: this.mass.slice() };
   };
   P.restore = function (s) {
+    this.falling = [];
     this.type.set(s.type); this.fluid.set(s.fluid); this.mass.set(s.mass);
     this.queue = []; this.saplings = [];
     this.solidDirty = this.fluidDirty = this.changed = true;
   };
   P.clear = function () {
+    this.falling = [];
     this.type.fill(0); this.fluid.fill(0); this.mass.fill(0);
     this.queue = []; this.saplings = []; this.events = [];
     this.solidDirty = this.fluidDirty = this.changed = true;
