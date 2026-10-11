@@ -98,6 +98,7 @@
                   + sin(uTime * ${(speed * 0.63).toFixed(2)} - position.x * 0.8 + position.z * 2.2) * 0.5;
          transformed.y += aWave * (wv * ${amp.toFixed(3)} - ${amp.toFixed(3)});`);
     };
+    mat.customProgramCacheKey = () => `fluid-wave:${amp}:${speed}`;
     return mat;
   }
 
@@ -226,7 +227,9 @@
     this.uTime = { value: 0 };
     this.solidMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.glowMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-    this.waterMat = waveMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.9, depthWrite: false, emissive: 0x06506a, emissiveIntensity: 0.4 }), 0.045, 1.8, this.uTime);
+    // Opaque, depth-tested water avoids unsortable overlapping triangles in
+    // the single merged fluid mesh (especially waterfalls viewed from behind).
+    this.waterMat = waveMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, depthWrite: true, emissive: 0x06506a, emissiveIntensity: 0.4 }), 0.045, 1.8, this.uTime);
     this.lavaMat = waveMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0xff3c00, emissiveIntensity: 0.55 }), 0.03, 0.9, this.uTime);
     this.meshes = {};
     ['solid', 'glow', 'water', 'lava'].forEach(k => {
@@ -503,22 +506,34 @@
     const S = this.surfaces; S.water = []; S.lava = [];
     const at = (x, y, z) => x + z * W + y * W * D;
     const inB = (x, y, z) => x >= 0 && y >= 0 && z >= 0 && x < W && y < H && z < D;
-    const surf = (i, f) => {
-      if (i + W * D < fluid.length && fluid[i + W * D] === f) return 1;
-      return Math.max(0.08, Math.min(1, mass[i]));
-    };
-    const corner = (x, y, z, cx, cz, f) => {
-      let s = 0, n = 0;
-      for (let dz = cz - 1; dz <= cz; dz++) for (let dx = cx - 1; dx <= cx; dx++) {
+    // Shared grid corners must have identical heights AND wave weights. Pin
+    // corners touching an upper fluid cell so waterfall stacks stay watertight.
+    const stride = (W + 1) * (D + 1), count = stride * H;
+    const cache = this.fluidCorners || (this.fluidCorners = [null,
+      new Float32Array(count * 2), new Float32Array(count * 2)]);
+    cache[WATER].fill(-1); cache[LAVA].fill(-1);
+    const corner = (x, y, z, f) => {
+      const data = cache[f], key = (x + z * (W + 1) + y * stride) * 2;
+      if (data[key] >= 0) return key;
+      let sum = 0, n = 0, full = false, pinned = false;
+      for (let dz = -1; dz <= 0; dz++) for (let dx = -1; dx <= 0; dx++) {
         const xx = x + dx, zz = z + dz;
-        if (xx < 0 || zz < 0 || xx >= W || zz >= D) continue;
+        if (!inB(xx, y, zz)) continue;
         const i = at(xx, y, zz);
         if (fluid[i] !== f) continue;
-        const hh = surf(i, f);
-        if (hh >= 1) return 1;
-        s += hh; n++;
+        const above = y + 1 < H ? i + W * D : -1;
+        const covered = above >= 0 && fluid[above] === f;
+        const h = covered ? 1 : Math.max(0.08, Math.min(1, mass[i]));
+        full = full || h >= 1;
+        pinned = pinned || covered || (above >= 0 && OPAQUE[type[above]]);
+        sum += h; n++;
       }
-      return n ? s / n : 0.1;
+      const h = full ? 1 : n ? sum / n : 0.08;
+      data[key] = h;
+      // The shader displaces downward by at most twice its amplitude. Keep a
+      // visible film above the floor even for the thinnest water/lava cells.
+      data[key + 1] = pinned ? 0 : Math.min(1, (h - 0.02) / (f === WATER ? 0.09 : 0.06));
+      return key;
     };
 
     for (let y = 0; y < H; y++) for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
@@ -540,15 +555,17 @@
         const r = hash3(x, y, z, 11);
         col = r < 0.2 ? P.lavaCrust : mix(P.lava, P.lavaHot, r);
       }
-      const hgt = [corner(x, y, z, 0, 0, f), corner(x, y, z, 1, 0, f), corner(x, y, z, 1, 1, f), corner(x, y, z, 0, 1, f)];
-      const hAt = (cx, cz) => hgt[cx ? (cz ? 2 : 1) : (cz ? 3 : 0)];
+      const corners = [corner(x, y, z, f), corner(x + 1, y, z, f), corner(x + 1, y, z + 1, f), corner(x, y, z + 1, f)];
+      const valueAt = (cx, cz, offset) => cache[f][corners[cx ? (cz ? 2 : 1) : (cz ? 3 : 0)] + offset];
+      const hAt = (cx, cz) => valueAt(cx, cz, 0);
+      const waveAt = (cx, cz) => valueAt(cx, cz, 1);
 
       // top surface
       if (!covered && !(above >= 0 && OPAQUE[type[above]] && mass[i] > 0.95)) {
         const F = FACES[2];
         const ps = F.c.map(c => [x + c[0], y + hAt(c[0], c[2]), z + c[2]]);
-        buf.quad(ps, F.n, [col, col, col, col], [1, 1, 1, 1]);
-        if (f === WATER) S.water.push([x + 0.5, y + mass[i], z + 0.5]); else S.lava.push([x + 0.5, y + Math.min(1, mass[i]), z + 0.5]);
+        buf.quad(ps, F.n, [col, col, col, col], F.c.map(c => waveAt(c[0], c[2])));
+        if (f === WATER) S.water.push([x + 0.5, y + Math.min(1, mass[i]), z + 0.5]); else S.lava.push([x + 0.5, y + Math.min(1, mass[i]), z + 0.5]);
       }
       // sides
       for (const fi of [0, 1, 4, 5]) {
@@ -559,7 +576,7 @@
           if (OPAQUE[type[j]] || fluid[j] === f) continue;
         }
         const ps = F.c.map(c => [x + c[0], y + (c[1] ? hAt(c[0], c[2]) : 0), z + c[2]]);
-        const ws = F.c.map(c => (c[1] && !covered ? 1 : 0));
+        const ws = F.c.map(c => c[1] ? waveAt(c[0], c[2]) : 0);
         const sc = mul(col, 0.92);
         buf.quad(ps, F.n, [sc, sc, sc, sc], ws);
       }
@@ -763,3 +780,4 @@
 
   window.PBRender = { Renderer, PHASES };
 })();
+

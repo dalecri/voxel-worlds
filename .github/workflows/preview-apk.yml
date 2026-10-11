@@ -1,0 +1,50 @@
+name: Test and build preview APK
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - run: npm ci
+      - name: Fluid regression tests
+        run: node --test tests/fluids.test.cjs
+      - name: Build installable APK
+        run: npm run apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voxel-worlds-preview-apk
+          path: dist/voxel-worlds.apk
+          if-no-files-found: error
+      - name: Install browser test tools
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install --with-deps chromium
+      - name: Browser rendering smoke test
+        run: node tests/browser-smoke.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rendering-screenshots
+          path: test-results/
