@@ -10,6 +10,10 @@
   <img src="docs/volcano.png" alt="Ember Isle at night" width="260">
 </p>
 
+## Play in your browser
+
+**[dalecri.github.io/voxel-worlds](https://dalecri.github.io/voxel-worlds/)** works on phones and computers, no install needed. It updates automatically whenever `main` changes.
+
 ## Install on Android
 
 1. On your phone, open the [**latest release**](../../releases/tag/latest) and download `voxel-worlds.apk`.
@@ -84,7 +88,7 @@ The APK lands in `dist/voxel-worlds.apk`. The other scripts:
 - `npm run sync` builds `www/` and copies it into the Android project.
 - `npm run icons` regenerates the launcher icons and splash screens from the images in `resources/`. Those images are rendered from the game itself.
 
-The GitHub Actions workflow in `.github/workflows/android.yml` runs the same `npm run apk` and publishes the result to the `latest` release.
+The GitHub Actions workflow in `.github/workflows/android.yml` runs the same `npm run apk` and publishes the result to the `latest` release. A second workflow, `.github/workflows/pages.yml`, publishes the same `www/` build to GitHub Pages.
 
 ## How it's made
 
