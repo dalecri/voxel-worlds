@@ -30,7 +30,10 @@ A new APK is built automatically every time `main` changes. Every build is signe
   - Sand falls, and sinks through water.
   - Rain fills hollows, and tree canopies keep the ground under them dry.
 - **Grow a garden.** Grass spreads over bare dirt and flowers bloom beside water. Saplings grow into the right tree for the ground they're on: box trees on grass, pines on snow, palms or cacti on sand.
-- **Three worlds to start from:**
+- **Endless random worlds.** Tap **New world** for a fresh landscape every time, from 10 themes: spring meadow, autumn woods, cherry blossom, alpine lake, desert canyon, tropical lagoon, lavender fields, mushroom forest, snowy woods and volcanic isle. Each one mixes a big feature (a mountain, hills, mesas or a volcano) with water (lakes, lagoons, an oasis, or rivers that pour off the edge), and has its own colours and trees: oaks, round trees, birches, willows, pines, palms, cacti, cherry trees, bushes and giant mushrooms.
+- **Wildlife:** fish swim in the lakes, bunnies hop around (and tumble if you dig under them), birds circle overhead, butterflies visit the flowers and fireflies light up the mushroom forest. Which animals you get depends on the theme.
+- **Explore and Edit modes.** In Explore mode (the default) nothing you touch changes the world, so you can zoom in and look around freely. Tap **Edit** to build, and the hand button to go back.
+- **Three hand-made worlds:**
   - **Waterfall Valley:** a snowy bluff, a spring-fed pond and a waterfall onto the dunes.
   - **Ember Isle:** a volcano that erupts in bursts, with a snowcap and a lagoon.
   - **Quiet Meadow:** a blank plot with one spring.
@@ -45,9 +48,12 @@ Your world saves automatically. In the app, saves live in an on-device SQLite da
 
 | | Phone | Computer |
 |---|---|---|
-| Use the selected tool | Tap, or drag to paint along one layer | Click or drag |
+| Look around (Explore mode) | Drag to spin, double-tap to zoom in on a spot | Drag |
+| Switch Explore / Edit | Edit button, or the hand at the left of the tool bar | <kbd>X</kbd> |
+| New random world | New world button (Explore mode) | <kbd>R</kbd> |
+| Use the selected tool (Edit mode) | Tap, or drag to paint along one layer | Click or drag |
 | Pour water or lava | Press and hold | Hold the mouse button |
-| Spin the island | Drag on the sky, twist with two fingers, or use the turn buttons | Right-drag, or <kbd>Q</kbd> / <kbd>E</kbd> |
+| Spin the island | Twist with two fingers, drag on the sky, or use the turn buttons | Right-drag, or <kbd>Q</kbd> / <kbd>E</kbd> |
 | Zoom and pan | Pinch, two-finger drag | Mouse wheel, middle-drag |
 | Pick a tool / undo | Tool bar and undo button | <kbd>1</kbd>–<kbd>5</kbd> / <kbd>U</kbd> |
 | Close a panel | Android back button | <kbd>Esc</kbd> |
@@ -84,9 +90,9 @@ The GitHub Actions workflow in `.github/workflows/android.yml` runs the same `np
 
 | File | What it does |
 |---|---|
-| `sim.js` | The world (a 24 × 24 × 24 voxel grid), fluid flow, reactions, plant growth, the three starting worlds and the save format. It doesn't draw anything, so it also runs in Node. |
-| `render.js` | three.js renderer. It builds the meshes (with baked ambient occlusion and the grass and snow lips over block edges), wavy fluid surfaces, voxel particles, drifting clouds whose shadows cross the island, rain and the day cycle. |
-| `main.js` | Touch and mouse input, tools, sound, discoveries, photo mode, saving and the Android back button. |
+| `sim.js` | The world (a 24 × 24 × 24 voxel grid), fluid flow, reactions, falling blocks, plant growth, the hand-made and random worlds, and the save format. It doesn't draw anything, so it also runs in Node. |
+| `render.js` | three.js renderer, including theme colours and the animals. It builds the meshes (with baked ambient occlusion and the grass and snow lips over block edges), wavy fluid surfaces, voxel particles, drifting clouds whose shadows cross the island, rain and the day cycle. |
+| `main.js` | Touch and mouse input, Explore and Edit modes, tools, sound, discoveries, photo mode, saving and the Android back button. |
 | `storage.js` | Mirrors saves into SQLite inside the app and restores them before the game starts. |
 | `android/` | The Capacitor Android project (app id `com.voxelworlds.app`). |
 

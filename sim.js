@@ -14,17 +14,18 @@
     AIR: 0, GRASS: 1, DIRT: 2, STONE: 3, SAND: 4, SNOW: 5, LOG: 6, LEAVES: 7, BLOSSOM: 8,
     AUTUMN: 9, PINE: 10, PLANK: 11, BRICK: 12, OBSIDIAN: 13, BASALT: 14, SPRING: 15, VENT: 16,
     LANTERN: 17, CACTUS: 18, FLOWER: 19, TUFT: 20, SAPLING: 21, MUSHROOM: 22, MOSS: 23,
+    CLAY: 24, BIRCH: 25, CAP: 26, STEM: 27,
   };
-  const NT = 24;
+  const NT = 32;
   const WATER = 1, LAVA = 2;
 
   const flags = (list) => { const a = new Uint8Array(NT); list.forEach(t => { a[t] = 1; }); return a; };
   // decor: tiny plants that sit in an otherwise empty cell; fluids sweep them away
   const DECOR = flags([T.FLOWER, T.TUFT, T.SAPLING, T.MUSHROOM]);
-  const FLAMMABLE = flags([T.LOG, T.LEAVES, T.BLOSSOM, T.AUTUMN, T.PINE, T.PLANK, T.CACTUS, T.MOSS,
+  const FLAMMABLE = flags([T.LOG, T.BIRCH, T.CAP, T.STEM, T.LEAVES, T.BLOSSOM, T.AUTUMN, T.PINE, T.PLANK, T.CACTUS, T.MOSS,
     T.FLOWER, T.TUFT, T.SAPLING, T.MUSHROOM]);
   const FALLS = flags([T.SAND]);
-  const LEAFY = flags([T.LEAVES, T.BLOSSOM, T.AUTUMN, T.PINE]);
+  const LEAFY = flags([T.LEAVES, T.BLOSSOM, T.AUTUMN, T.PINE, T.CAP]);
 
   const isSolid = t => t !== T.AIR && !DECOR[t];
   const idx = (x, y, z) => x + z * W + y * WD;
@@ -60,6 +61,62 @@
   const DIRS4 = [[1, 0], [-1, 0], [0, 1], [0, -1]];
   const DIRS6 = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 
+  // ---- themes for random worlds (the renderer adds matching colours and critters) ----
+  const THEMES = {
+    spring: { label: 'Spring meadow', adj: ['Clover', 'Bluebell', 'Honeybee', 'Dewdrop', 'Buttercup'], noun: ['Vale', 'Hollow', 'Meadows', 'Glen', 'Downs'],
+      base: 7, amp: 3, snow: 99, trees: { oak: 3, round: 2, birch: 2, blossom: 1, bush: 2 }, density: 0.05,
+      flowers: 0.12, tufts: 0.2, shrooms: 0.01, big: ['mountain', 'hill', 'none'], water: ['lake', 'river', 'lake+river'] },
+    autumn: { label: 'Autumn woods', adj: ['Amber', 'Maple', 'Russet', 'Cider', 'Harvest'], noun: ['Ridge', 'Woods', 'Hollow', 'Hill', 'Brook'],
+      base: 7, amp: 3, snow: 99, leaf: T.AUTUMN, trees: { round: 3, autumn: 3, birch: 2, bush: 2 }, density: 0.06,
+      flowers: 0.04, tufts: 0.18, shrooms: 0.04, big: ['hill', 'mountain'], water: ['river', 'lake+river'] },
+    sakura: { label: 'Cherry blossom', adj: ['Sakura', 'Petal', 'Moonlit', 'Blush', 'Spring'], noun: ['Garden', 'Pond', 'Terrace', 'Grove', 'Falls'],
+      base: 7, amp: 3, snow: 99, trees: { sakura: 3, blossom: 2, bush: 1 }, density: 0.045,
+      flowers: 0.1, tufts: 0.12, shrooms: 0, lanterns: 0.025, big: ['hill', 'mountain', 'none'], water: ['lake', 'lake+river'] },
+    alpine: { label: 'Alpine lake', adj: ['Frost', 'Glacier', 'Granite', 'Edelweiss', 'Summit'], noun: ['Peak', 'Lake', 'Pass', 'Tarn', 'Crag'],
+      base: 7, amp: 4, snow: 14, trees: { pine: 6, birch: 1 }, density: 0.06,
+      flowers: 0.05, tufts: 0.15, shrooms: 0.01, big: ['mountain'], water: ['lake', 'lake+river', 'river'] },
+    desert: { label: 'Desert canyon', adj: ['Sunbaked', 'Copper', 'Mirage', 'Dune', 'Saffron'], noun: ['Mesa', 'Canyon', 'Oasis', 'Butte', 'Flats'],
+      base: 6, amp: 2, snow: 99, ground: 'sand', trees: { cactus: 5, palm: 1 }, density: 0.03,
+      flowers: 0.01, tufts: 0.03, shrooms: 0, big: ['mesa'], water: ['oasis'] },
+    tropical: { label: 'Tropical lagoon', adj: ['Coral', 'Mango', 'Lagoon', 'Turquoise', 'Coconut'], noun: ['Cove', 'Isle', 'Bay', 'Lagoon', 'Reef'],
+      base: 6, amp: 2, snow: 99, trees: { palm: 4, round: 2, bush: 3 }, density: 0.05, beach: 2,
+      flowers: 0.1, tufts: 0.15, shrooms: 0, big: ['hill', 'none'], water: ['lagoon'] },
+    lavender: { label: 'Lavender fields', adj: ['Lavender', 'Lilac', 'Violet', 'Heather', 'Thistle'], noun: ['Fields', 'Farm', 'Hills', 'Rows', 'Valley'],
+      base: 7, amp: 2, snow: 99, trees: { birch: 2, round: 1, bush: 2 }, density: 0.025, field: true,
+      flowers: 0.3, tufts: 0.1, shrooms: 0, big: ['hill', 'none'], water: ['river', 'lake'] },
+    mystic: { label: 'Mushroom forest', adj: ['Glowcap', 'Twilight', 'Mossy', 'Whisper', 'Fable'], noun: ['Grove', 'Bog', 'Thicket', 'Hollow', 'Marsh'],
+      base: 7, amp: 2, snow: 99, trees: { giantShroom: 3, willow: 2, bush: 1 }, density: 0.05,
+      flowers: 0.04, tufts: 0.2, shrooms: 0.08, lanterns: 0.03, big: ['hill', 'none'], water: ['lake', 'lake+river'] },
+    winter: { label: 'Snowy woods', adj: ['Snowdrift', 'Frosty', 'Pinecone', 'Hollyberry', 'Starlit'], noun: ['Woods', 'Hills', 'Pond', 'Hollow', 'Lodge'],
+      base: 7, amp: 3, snow: 0, ground: 'snow', trees: { pine: 5, birch: 1 }, density: 0.06,
+      flowers: 0, tufts: 0, shrooms: 0, lanterns: 0.01, big: ['mountain', 'hill'], water: ['lake'] },
+    volcanic: { label: 'Volcanic isle', adj: ['Ember', 'Cinder', 'Obsidian', 'Smoky', 'Magma'], noun: ['Isle', 'Peak', 'Caldera', 'Crater', 'Rock'],
+      base: 6, amp: 2, snow: 99, ground: 'ash', trees: { bush: 2, round: 1, palm: 1 }, density: 0.03,
+      flowers: 0.03, tufts: 0.08, shrooms: 0, big: ['volcano'], water: ['lake', 'lagoon'] },
+  };
+  const GRASS_TREES = new Set(['oak', 'round', 'birch', 'blossom', 'autumn', 'willow', 'bush', 'giantShroom', 'sakura', 'palm', 'pine']);
+  function pickWeighted(weights, rnd, allowed) {
+    let total = 0;
+    for (const k in weights) if (!allowed || allowed.has(k)) total += weights[k];
+    if (!total) return null;
+    let r = rnd() * total;
+    for (const k in weights) if (!allowed || allowed.has(k)) { r -= weights[k]; if (r <= 0) return k; }
+    return null;
+  }
+  // smooth value noise, 0..1
+  function makeNoise(rnd) {
+    const S = 32, g = new Float32Array(S * S);
+    for (let i = 0; i < g.length; i++) g[i] = rnd();
+    const at = (x, z) => g[(x & 31) + (z & 31) * S];
+    return (x, z) => {
+      const x0 = Math.floor(x), z0 = Math.floor(z);
+      let fx = x - x0, fz = z - z0;
+      fx = fx * fx * (3 - 2 * fx); fz = fz * fz * (3 - 2 * fz);
+      const a = at(x0, z0), b = at(x0 + 1, z0), c = at(x0, z0 + 1), d = at(x0 + 1, z0 + 1);
+      return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
+    };
+  }
+
   function World() {
     this.type = new Uint8Array(N);
     this.fluid = new Uint8Array(N);
@@ -69,6 +126,8 @@
     this.fallIn = new Float32Array(N);   // fluid that poured in from above last tick (renderer: foam)
     this.edgeOut = new Float32Array(N);  // fluid that poured over the island edge last tick
     this.falling = [];                   // blocks in mid-air: { x, z, y, py, vy, t }
+    this.theme = null;                   // random worlds: palette, trees and critters
+    this.name = '';
     this.events = [];
     this.tick = 0;
     this.raining = false;
@@ -170,10 +229,14 @@
       }
       if (rem <= 0) continue;
 
-      // 2. spread sideways (level out)
-      if (rem > cfg.minSide) {
+      // 2. spread sideways (level out). Water at the island's edge always trickles off,
+      // even when thin, so edge waterfalls run steadily instead of pulsing.
+      const edgeDrain = f === WATER && rem > 0.004;
+      if (rem > cfg.minSide || edgeDrain) {
+        const thin = rem <= cfg.minSide;
         for (let d = 0; d < 4; d++) {
           const nx = x + DIRS4[d][0], nz = z + DIRS4[d][1];
+          if (thin && !(nx < 0 || nz < 0 || nx >= W || nz >= D)) continue;
           if (nx < 0 || nz < 0 || nx >= W || nz >= D) {
             // over the edge of the world: it pours off
             const fl = Math.min(rem, rem * 0.25 * cfg.spread);
@@ -400,8 +463,69 @@
       for (const [dx, dz] of DIRS4) { put(dx, h, dz, T.LEAVES); put(dx * 2, h - 1, dz * 2, T.LEAVES); }
       return out;
     }
+    const themeLeaf = (THEMES[this.theme] && THEMES[this.theme].leaf) || T.LEAVES;
+    if (kind === 'birch') {
+      const h = 3 + ((rnd() * 2) | 0);
+      for (let k = 0; k < h; k++) put(0, k, 0, T.BIRCH);
+      for (let dy = 0; dy < 2; dy++) for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+        if (Math.abs(dx) + Math.abs(dz) === 2 && (dy === 1 || rnd() < 0.5)) continue;
+        if (dx || dz || dy) put(dx, h - 1 + dy, dz, themeLeaf);
+      }
+      put(0, h + 1, 0, themeLeaf);
+      return out;
+    }
+    if (kind === 'round') {
+      const trunk = 2 + ((rnd() * 2) | 0), cy = trunk + 1;
+      for (let k = 0; k < cy; k++) put(0, k, 0, T.LOG);
+      for (let dy = -1; dy <= 2; dy++) for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+        if (dx * dx + dz * dz + (dy - 0.4) * (dy - 0.4) * 1.6 > 5.2) continue;
+        if (!dx && !dz && dy < 0) continue;
+        put(dx, cy + dy, dz, themeLeaf);
+      }
+      return out;
+    }
+    if (kind === 'willow') {
+      const trunk = 3;
+      for (let k = 0; k < trunk + 1; k++) put(0, k, 0, T.LOG);
+      for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) { put(dx, trunk + 1, dz, themeLeaf); if (dx || dz) put(dx, trunk, dz, themeLeaf); }
+      for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== 2 || (Math.abs(dx) === 2 && Math.abs(dz) === 2)) continue;
+        const drop = 1 + ((rnd() * 3) | 0);                    // hanging fronds
+        for (let k = 0; k < drop; k++) put(dx, trunk - k, dz, themeLeaf);
+      }
+      return out;
+    }
+    if (kind === 'bush') {
+      put(0, 0, 0, themeLeaf);
+      if (rnd() < 0.6) { const [dx, dz] = DIRS4[(rnd() * 4) | 0]; put(dx, 0, dz, themeLeaf); }
+      if (rnd() < 0.3) put(0, 1, 0, themeLeaf);
+      return out;
+    }
+    if (kind === 'giantShroom') {
+      const h = 3 + ((rnd() * 2) | 0);
+      for (let k = 0; k < h; k++) put(0, k, 0, T.STEM);
+      for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+        if (Math.abs(dx) === 2 && Math.abs(dz) === 2) continue;
+        put(dx, h, dz, T.CAP);
+        if (Math.abs(dx) < 2 && Math.abs(dz) < 2) put(dx, h + 1, dz, T.CAP);
+      }
+      return out;
+    }
+    if (kind === 'sakura') {
+      const trunk = 2 + ((rnd() * 2) | 0);
+      for (let k = 0; k < trunk; k++) put(0, k, 0, T.LOG);
+      const [ox, oz] = DIRS4[(rnd() * 4) | 0];
+      put(ox, trunk, oz, T.LOG);                                 // a crooked branch
+      for (let dy = 0; dy < 2; dy++) for (let dz = -2; dz <= 2; dz++) for (let dx = -2; dx <= 2; dx++) {
+        if (Math.abs(dx) === 2 && Math.abs(dz) === 2) continue;
+        if (dy === 1 && (Math.abs(dx) === 2 || Math.abs(dz) === 2) && rnd() < 0.6) continue;
+        put(dx + ox, trunk + 1 + dy, dz + oz, T.BLOSSOM);
+      }
+      for (let k = 0; k < 3; k++) put(ox + ((rnd() * 5) | 0) - 2, trunk, oz + ((rnd() * 5) | 0) - 2, T.BLOSSOM);
+      return out;
+    }
     // the reference-style box tree: thin trunk, chunky cube canopy
-    const leaf = kind === 'blossom' ? T.BLOSSOM : kind === 'autumn' ? T.AUTUMN : T.LEAVES;
+    const leaf = kind === 'blossom' ? T.BLOSSOM : kind === 'autumn' ? T.AUTUMN : themeLeaf;
     const trunk = 1 + ((rnd() * 2) | 0);
     for (let k = 0; k < trunk + 1; k++) put(0, k, 0, T.LOG);
     const big = rnd() < 0.55;
@@ -416,7 +540,9 @@
   P.growTree = function (x, y, z, kind, instant) {
     if (!kind) {
       const g = this.get(x, y - 1, z), r = this.rand();
+      const th = THEMES[this.theme];
       kind = g === T.SNOW ? 'pine' : g === T.SAND ? (r < 0.5 ? 'cactus' : 'palm')
+        : th ? pickWeighted(th.trees, this.rand, GRASS_TREES) || 'oak'
         : r < 0.34 ? 'oak' : r < 0.67 ? 'blossom' : 'autumn';
     }
     const rnd = mulberry((x * 73856093) ^ (z * 19349663) ^ (y * 83492791) ^ (this.tick + 1));
@@ -526,7 +652,7 @@
     }
     for (let i = 0; i < N; i++) q[i] = Math.min(255, Math.round(this.mass[i] * 200));
     return { v: 1, w: W, d: D, h: H, t: b64.enc(types), f: b64.enc(this.fluid), m: b64.enc(q),
-      sap: this.saplings.map(s => [s.x, s.y, s.z, s.kind || '']) };
+      sap: this.saplings.map(s => [s.x, s.y, s.z, s.kind || '']), theme: this.theme, name: this.name };
   };
   P.load = function (o) {
     this.falling = [];
@@ -535,17 +661,19 @@
     if (t.length !== N || f.length !== N || m.length !== N) return false;
     this.type.set(t); this.fluid.set(f);
     for (let i = 0; i < N; i++) this.mass[i] = f[i] ? m[i] / 200 : 0;
+    this.theme = THEMES[o.theme] ? o.theme : null; this.name = o.name || '';
     this.saplings = (o.sap || []).map(([x, y, z, kind], k) => ({ x, y, z, kind: kind || undefined, at: this.tick + 20 + k * 5 }));
     this.queue = [];
     this.solidDirty = this.fluidDirty = true;
     return true;
   };
   P.snapshot = function () {
-    return { type: this.type.slice(), fluid: this.fluid.slice(), mass: this.mass.slice() };
+    return { type: this.type.slice(), fluid: this.fluid.slice(), mass: this.mass.slice(), theme: this.theme, name: this.name };
   };
   P.restore = function (s) {
     this.falling = [];
     this.type.set(s.type); this.fluid.set(s.fluid); this.mass.set(s.mass);
+    this.theme = s.theme || null; this.name = s.name || '';
     this.queue = []; this.saplings = [];
     this.solidDirty = this.fluidDirty = this.changed = true;
   };
@@ -687,12 +815,229 @@
   };
   P.generate = function (name) {
     this.clear();
+    this.theme = null; this.name = '';
     (PRESETS[name] || PRESETS.valley).build(this);
     this.queue = [];
     this.solidDirty = this.fluidDirty = this.changed = true;
   };
 
-  const PB = { W, D, H, N, WD, T, WATER, LAVA, DECOR, FLAMMABLE, LEAFY, isSolid, idx, hash3, mulberry, World, PRESETS };
+
+  // ---------------------------------------------------------------
+  // Random worlds: a themed landscape with a big feature (mountain, mesa,
+  // volcano, hills) and water (lakes, rivers that pour off the edge, lagoons)
+  P.generateRandom = function (seed, themeName) {
+    const rnd = mulberry(Math.imul(seed >>> 0, 2654435761) ^ 0x5bd1e995);
+    const keys = Object.keys(THEMES);
+    const theme = THEMES[themeName] ? themeName : keys[(rnd() * keys.length) | 0];
+    const TH = THEMES[theme];
+    const pick = a => a[(rnd() * a.length) | 0];
+    this.clear();
+    this.theme = theme;
+    this.name = pick(TH.adj) + ' ' + pick(TH.noun);
+    const n1 = makeNoise(rnd), n2 = makeNoise(rnd), n3 = makeNoise(rnd);
+    const ci = (x, z) => x + z * W;
+    const hg = new Float32Array(W * D);
+    const wl = new Int16Array(W * D).fill(-1);       // water surface height per column
+    const mesa = new Uint8Array(W * D);
+    const springs = [], vents = [];
+    for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
+      hg[ci(x, z)] = TH.base + (n1(x / 7, z / 7) * 0.65 + n2(x / 3.3, z / 3.3) * 0.35 - 0.5) * 2 * TH.amp;
+    }
+    const corner = () => [rnd() < 0.5 ? 3 + rnd() * 5 : W - 3 - rnd() * 5, rnd() < 0.5 ? 3 + rnd() * 5 : D - 3 - rnd() * 5];
+    const forEachIn = (cx, cz, r, fn) => {
+      for (let z = Math.max(0, Math.floor(cz - r)); z < Math.min(D, Math.ceil(cz + r + 1)); z++)
+        for (let x = Math.max(0, Math.floor(cx - r)); x < Math.min(W, Math.ceil(cx + r + 1)); x++) fn(x, z, Math.hypot(x - cx, z - cz) / r);
+    };
+
+    // -- the big feature
+    const big = pick(TH.big);
+    let peak = null, peakR = 0;
+    if (big === 'mountain' || big === 'hill') {
+      const [cx, cz] = corner(), r = big === 'hill' ? 5 + rnd() * 3 : 8 + rnd() * 4, ph = big === 'hill' ? 2.5 + rnd() * 2 : 6 + rnd() * 4;
+      forEachIn(cx, cz, r, (x, z, d) => { if (d < 1) hg[ci(x, z)] += ph * Math.pow(1 - d, 1.15) * (0.75 + 0.5 * n3(x / 4, z / 4)); });
+      peak = [cx, cz]; peakR = r;
+    } else if (big === 'mesa') {
+      const count = 1 + ((rnd() * 2) | 0);
+      for (let k = 0; k < count; k++) {
+        const [cx, cz] = corner(), r = 3 + rnd() * 3, top = TH.base + 4 + ((rnd() * 4) | 0);
+        forEachIn(cx, cz, r * 1.3, (x, z, d) => { if (d < 0.75 + 0.35 * n3(x / 2.5, z / 2.5)) { hg[ci(x, z)] = top; mesa[ci(x, z)] = 1; } });
+        if (!peak) { peak = [cx, cz]; peakR = r * 1.2; }
+      }
+    } else if (big === 'volcano') {
+      const [cx, cz] = rnd() < 0.5 ? [7 + rnd() * 10, 7 + rnd() * 10] : corner().map(v => (v + 12) / 2);
+      forEachIn(cx, cz, 8, (x, z, d) => { if (d < 1) hg[ci(x, z)] = Math.max(hg[ci(x, z)], TH.base + 12 * Math.pow(1 - d, 0.9)); });
+      forEachIn(cx, cz, 1.8, (x, z, d) => { if (d < 1) hg[ci(x, z)] = TH.base + 8; });
+      vents.push([Math.round(cx), Math.round(cz)]);
+      peak = [cx, cz]; peakR = 8;
+    }
+
+    // -- terraces: round to steps of 1 or 2 for crisp cliffs like the reference
+    const step = rnd() < 0.55 ? 2 : 1;
+    for (let i = 0; i < W * D; i++) hg[i] = Math.max(3, Math.min(H - 6, Math.round(hg[i] / step) * step));
+
+    // -- water
+    const lake = (cx, cz, rx, rz) => {
+      const cells = [];
+      for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
+        const d = Math.hypot((x - cx) / rx, (z - cz) / rz) + (n3(x / 2, z / 2) - 0.5) * 0.25;
+        if (d < 1) cells.push([x, z, d]);
+      }
+      if (!cells.length) return null;
+      // the rim's lowest point sets the level, so the lake sits flush in the land
+      let level = Infinity;
+      for (const [x, z] of cells) for (const [dx, dz] of DIRS4) {
+        const xx = x + dx, zz = z + dz;
+        if (xx < 0 || zz < 0 || xx >= W || zz >= D) continue;
+        if (!cells.some(c => c[0] === xx && c[1] === zz)) level = Math.min(level, hg[ci(xx, zz)]);
+      }
+      level = Math.max(4, Math.min(level, TH.base + 2));
+      let deep = null;
+      for (const [x, z, d] of cells) {
+        const floor = level - 1 - Math.round((1 - d) * 2.4);
+        hg[ci(x, z)] = Math.min(hg[ci(x, z)], Math.max(2, floor));
+        wl[ci(x, z)] = level;
+        if (!deep || d < deep[2]) deep = [x, z, d];
+      }
+      // keep the banks at least as high as the water
+      for (const [x, z] of cells) for (const [dx, dz] of DIRS4) {
+        const xx = x + dx, zz = z + dz;
+        if (xx < 0 || zz < 0 || xx >= W || zz >= D || wl[ci(xx, zz)] >= 0) continue;
+        if (hg[ci(xx, zz)] < level) hg[ci(xx, zz)] = level;
+      }
+      springs.push([deep[0], deep[1]]);
+      return { cx, cz, level, cells };
+    };
+    const river = (sx, sz, startH) => {
+      // walk toward the nearest edge, wandering a little; the bed only ever steps down
+      const ex = sx < W / 2 ? -1 : 1, ez = sz < D / 2 ? -1 : 1;
+      const alongX = Math.min(sx, W - 1 - sx) < Math.min(sz, D - 1 - sz);
+      let x = Math.round(sx), z = Math.round(sz), cur = startH, first = true, wide = rnd() < 0.5;
+      for (let guard = 0; guard < 60; guard++) {
+        if (x < 0 || z < 0 || x >= W || z >= D) break;
+        const i = ci(x, z);
+        if (wl[i] >= 0 && !first) break;                  // ran into a lake
+        cur = Math.min(cur, hg[i] - 1);
+        cur = Math.max(cur, 2);
+        if (!first || wl[i] < 0) { hg[i] = cur; wl[i] = cur + 1; }
+        if (wide) {
+          const wx = alongX ? x : x + 1, wz = alongX ? z + 1 : z;
+          if (wx < W && wz < D && wl[ci(wx, wz)] < 0) { hg[ci(wx, wz)] = Math.min(hg[ci(wx, wz)], cur); wl[ci(wx, wz)] = cur + 1; }
+        }
+        first = false;
+        const r = rnd();
+        if (alongX) { x += ex; if (r < 0.25) z += 1; else if (r < 0.5) z -= 1; z = Math.max(0, Math.min(D - 2, z)); }
+        else { z += ez; if (r < 0.25) x += 1; else if (r < 0.5) x -= 1; x = Math.max(0, Math.min(W - 2, x)); }
+      }
+    };
+    const wat = pick(TH.water);
+    if (wat === 'lake' || wat === 'lake+river' || wat === 'oasis' || wat === 'lagoon') {
+      const size = wat === 'lagoon' ? 5 + rnd() * 2 : wat === 'oasis' ? 2.6 + rnd() * 1.2 : 3.5 + rnd() * 2;
+      let cx = W / 2 + (rnd() - 0.5) * 6, cz = D / 2 + (rnd() - 0.5) * 6;
+      if (peak) {
+        // set the water beside the big feature, never on top of it
+        let dx = W / 2 - peak[0], dz = D / 2 - peak[1], len = Math.hypot(dx, dz);
+        if (len < 3) { const a = rnd() * Math.PI * 2; dx = Math.cos(a); dz = Math.sin(a); len = 1; }
+        const dist = peakR * 0.85 + size;
+        cx = Math.max(size * 0.8, Math.min(W - 1 - size * 0.8, peak[0] + dx / len * dist));
+        cz = Math.max(size * 0.8, Math.min(D - 1 - size * 0.8, peak[1] + dz / len * dist));
+      }
+      const L = lake(cx, cz, size * (0.8 + rnd() * 0.4), size * (0.8 + rnd() * 0.4));
+      if (L && wat === 'lake+river') {
+        // the outlet: the lake's edge closest to the island edge
+        let best = null;
+        for (const [x, z] of L.cells) { const e = Math.min(x, z, W - 1 - x, D - 1 - z); if (!best || e < best[2]) best = [x, z, e]; }
+        river(best[0], best[1], L.level - 1);
+      }
+    }
+    if (wat === 'river') {
+      const s = peak ? [peak[0] + (W / 2 - peak[0]) * 0.35, peak[1] + (D / 2 - peak[1]) * 0.35] : [W / 2 + (rnd() - 0.5) * 8, D / 2 + (rnd() - 0.5) * 8];
+      const sx = Math.round(s[0]), sz = Math.round(s[1]);
+      river(sx, sz, hg[ci(sx, sz)] - 1);
+      springs.push([sx, sz]);
+    }
+
+    // -- build the columns
+    const nearWater = (x, z, r) => {
+      for (let dz = -r; dz <= r; dz++) for (let dx = -r; dx <= r; dx++) {
+        const xx = x + dx, zz = z + dz;
+        if (xx >= 0 && zz >= 0 && xx < W && zz < D && wl[ci(xx, zz)] >= 0) return wl[ci(xx, zz)];
+      }
+      return -1;
+    };
+    for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
+      const i = ci(x, z), h = hg[i];
+      let steep = 0;
+      for (const [dx, dz] of DIRS4) { const xx = x + dx, zz = z + dz; if (xx >= 0 && zz >= 0 && xx < W && zz < D) steep = Math.max(steep, h - hg[ci(xx, zz)]); }
+      const wv = nearWater(x, z, TH.beach || 1);
+      let top;
+      if (wl[i] >= 0) top = T.SAND;
+      else if (TH.ground === 'snow' || h >= TH.snow) top = T.SNOW;
+      else if (TH.ground === 'sand') top = mesa[i] && n3(x / 3, z / 3) > 0.45 ? T.CLAY : T.SAND;
+      else if (TH.ground === 'ash') top = n3(x / 3, z / 3) > 0.45 ? T.GRASS : hash3(x, 3, z, seed) < 0.6 ? T.BASALT : T.STONE;
+      else if (wv >= 0 && h <= wv + 1) top = T.SAND;
+      else if (steep >= 4 && hash3(x, 1, z, seed) < 0.5) top = T.STONE;
+      else top = T.GRASS;
+      for (let y = 0; y < h; y++) {
+        let t;
+        if (y === h - 1) t = top;
+        else if (y <= 1) t = T.STONE;
+        else if (TH.ground === 'sand' || mesa[i]) t = y % 3 === 0 ? T.SAND : T.CLAY;     // banded canyon walls
+        else if (top === T.SAND && y >= h - 3) t = T.SAND;
+        else if (TH.ground === 'ash' && y < h - 2) t = T.STONE;
+        else t = T.DIRT;
+        this.type[idx(x, y, z)] = t;
+      }
+      if (wl[i] > h) for (let y = h; y < wl[i]; y++) { const j = idx(x, y, z); this.fluid[j] = WATER; this.mass[j] = 1; }
+    }
+    for (const [x, z] of springs) { const y = hg[ci(x, z)] - 1; if (y > 0) this.type[idx(x, y, z)] = T.SPRING; }
+    for (const [x, z] of vents) {
+      const y = hg[ci(x, z)] - 1;
+      this.type[idx(x, y, z)] = T.VENT;
+      forEachIn(x, z, 1.5, (xx, zz, d) => { if (d < 1) this.type[idx(xx, hg[ci(xx, zz)] - 1, zz)] = T.BASALT; });
+      this.type[idx(x, y, z)] = T.VENT;
+    }
+
+    // -- trees, flowers and mushrooms
+    const trunks = vents.map(([x, z]) => [x, z]);       // keep the volcano's mouth bare
+    const clear = (x, z, d) => trunks.every(([a, b]) => Math.abs(a - x) + Math.abs(b - z) > d);
+    const tries = Math.round(W * D * TH.density * 2.2);
+    for (let k = 0; k < tries; k++) {
+      const x = 1 + ((rnd() * (W - 2)) | 0), z = 1 + ((rnd() * (D - 2)) | 0);
+      const y = this.topY(x, z);
+      if (y < 0 || wl[ci(x, z)] >= 0 || this.fluid[idx(x, y + 1, z)] || this.type[idx(x, y + 1, z)]) continue;
+      const g = this.type[idx(x, y, z)];
+      let kind;
+      if (g === T.SNOW) kind = pickWeighted(TH.trees, rnd, new Set(['pine', 'birch'])) || (TH.ground === 'snow' ? 'pine' : null);
+      else if (g === T.SAND) kind = pickWeighted(TH.trees, rnd, new Set(['palm', 'cactus']));
+      else if (g === T.GRASS) kind = pickWeighted(TH.trees, rnd, GRASS_TREES);
+      if (vents.some(([vx, vz]) => Math.hypot(vx - x, vz - z) < 5)) continue;
+      const spread = kind === 'bush' ? 1 : (kind === 'round' || kind === 'sakura' || kind === 'willow' || kind === 'giantShroom') ? 4 : 3;
+      if (!kind || !clear(x, z, spread)) continue;
+      if (rnd() > TH.density * 12) continue;
+      this.growTree(x, y + 1, z, kind, true);
+      trunks.push([x, z]);
+    }
+    for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) {
+      const y = this.topY(x, z);
+      if (y < 0 || y + 1 >= H) continue;
+      const a = idx(x, y + 1, z), g = this.type[idx(x, y, z)];
+      if (this.type[a] || this.fluid[a]) continue;
+      const r = rnd();
+      if (g === T.GRASS) {
+        const nearTree = !clear(x, z, 2);
+        const fp = TH.field ? (n2(x / 2.2, z / 6) > 0.5 ? TH.flowers * 2.6 : TH.flowers * 0.15) : TH.flowers;
+        if (r < fp) this.type[a] = T.FLOWER;
+        else if (r < fp + TH.shrooms * (nearTree ? 3 : 1)) this.type[a] = T.MUSHROOM;
+        else if (r < fp + TH.shrooms * 3 + TH.tufts) this.type[a] = T.TUFT;
+        else if (TH.lanterns && nearWater(x, z, 1) >= 0 && r > 1 - TH.lanterns * 4) this.type[a] = T.LANTERN;
+      } else if (g === T.SAND && TH.ground === 'sand' && r < 0.02) this.type[a] = T.TUFT;
+    }
+    this.queue = [];
+    this.solidDirty = this.fluidDirty = this.changed = true;
+    return { theme, name: this.name };
+  };
+
+  const PB = { W, D, H, N, WD, T, WATER, LAVA, DECOR, FLAMMABLE, LEAFY, isSolid, idx, hash3, mulberry, World, PRESETS, THEMES };
   if (typeof module !== 'undefined' && module.exports) module.exports = PB;
   else root.PB = PB;
 })(typeof window !== 'undefined' ? window : globalThis);

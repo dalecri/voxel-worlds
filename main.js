@@ -181,7 +181,7 @@ function startVoxelWorlds() {
   view.rebuildSolid(); view.snapFluids();
   world.solidDirty = world.fluidDirty = false;
 
-  const state = { tool: 'build', block: T.GRASS, plant: 'tree', pour: null, stroke: null };
+  const state = { tool: 'build', block: T.GRASS, plant: 'tree', pour: null, stroke: null, mode: store.get('pb.mode', 'explore') };
   const undo = [];
 
   // stars
@@ -220,7 +220,7 @@ function startVoxelWorlds() {
   const tray = $('#tray');
   function renderTray() {
     tray.innerHTML = '';
-    const show = state.tool === 'build' || state.tool === 'plant';
+    const show = state.mode === 'edit' && (state.tool === 'build' || state.tool === 'plant');
     tray.classList.toggle('open', show);
     if (state.tool === 'build') {
       BLOCKS.forEach(([t, name, top, side, hint]) => {
@@ -245,12 +245,45 @@ function startVoxelWorlds() {
   document.querySelectorAll('.tools button').forEach(b => {
     b.onclick = () => {
       const t = b.dataset.tool;
+      if (b.dataset.mode === 'explore') { setMode('explore'); return; }
       state.tool = state.tool === t && (t === 'build' || t === 'plant') && tray.classList.contains('open') ? t : t;
       document.querySelectorAll('.tools button').forEach(x => x.classList.toggle('on', x.dataset.tool === state.tool));
       renderTray();
       Sound.init();
     };
   });
+
+  // ---------------------------------------------------------------
+  // Explore mode: look around freely, nothing you touch changes the world
+  function setMode(mode, quiet) {
+    state.mode = mode;
+    store.set('pb.mode', mode);
+    document.body.classList.toggle('exploring', mode === 'explore');
+    state.stroke = null; state.pour = null; view.showCursor(null);
+    renderTray();
+    if (quiet) return;
+    haptic(6);
+    if (mode === 'explore' && !store.get('pb.tipExplore', false)) {
+      store.set('pb.tipExplore', true);
+      toast('<b>Exploring</b><span>Drag to look around, pinch to zoom, double-tap to zoom in. Nothing changes until you tap Edit.</span>', 4200);
+    }
+  }
+  $('#bEdit').onclick = () => { setMode('edit'); Sound.init(); };
+
+  // Random worlds
+  function surprise() {
+    pushUndo();
+    const seed = (Math.random() * 0xffffffff) >>> 0;
+    const r = world.generateRandom(seed);
+    meta.preset = 'random'; meta.seed = seed; saveMeta();
+    view.resetWorld(); updateHeader();
+    view.panGoal.set(0, 0, 0); view.zoomGoal = 1;
+    const label = PB.THEMES[r.theme].label;
+    toast(`<b>${r.name}</b><span>${label}</span>`, 2200);
+    const d = $('#bSurprise svg'); if (d) { d.classList.remove('spin'); void d.getBBox; requestAnimationFrame(() => d.classList.add('spin')); }
+    Sound.arpeggio(); haptic(10);
+  }
+  $('#bSurprise').onclick = () => { Sound.init(); surprise(); };
 
   const toastQ = [];
   let toastBusy = 0;
@@ -274,7 +307,7 @@ function startVoxelWorlds() {
     updateHeader();
   }
   function updateHeader() {
-    $('#worldName').textContent = PRESETS[meta.preset] ? PRESETS[meta.preset].name : 'My World';
+    $('#worldName').textContent = world.name || (PRESETS[meta.preset] ? PRESETS[meta.preset].name : 'My World');
     $('#disc').textContent = `✦ ${found.size} of ${DISCOVERIES.length} found`;
     $('#bRain').classList.toggle('on', world.raining);
     $('#bTime').dataset.phase = meta.phase;
@@ -397,7 +430,7 @@ function startVoxelWorlds() {
       // second finger: this is a camera gesture, take back the accidental tap
       if (state.stroke) {
         const quick = performance.now() - state.stroke.t0 < 350 && state.stroke.acted <= 1;
-        if (quick && state.stroke.acted && undo.length) world.restore(undo.pop());
+        if (quick && state.stroke.acted && undo.length) { world.restore(undo.pop()); view.rebuildSolid(); view.snapFluids(); }
         state.stroke = null; state.pour = null; view.showCursor(null);
       }
       orbit = null;
@@ -407,6 +440,10 @@ function startVoxelWorlds() {
     }
     if (pointers.size > 2) return;
     if (e.button === 2 || e.button === 1 || e.altKey) { orbit = { x: e.clientX, y: e.clientY, pan: e.button === 1 }; return; }
+    if (state.mode === 'explore') {
+      orbit = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t0: performance.now() };
+      return;
+    }
     beginStroke(e);
   });
   canvas.addEventListener('pointermove', e => {
@@ -429,16 +466,31 @@ function startVoxelWorlds() {
       return;
     }
     if (state.stroke) { moveStroke(e); return; }
-    if (e.pointerType === 'mouse') {
+    if (e.pointerType === 'mouse' && state.mode === 'edit') {
       hover = targetFor(view.pick(e.clientX, e.clientY, state.tool === 'dig'));
       view.showCursor(hover, TOOLS[state.tool].color);
     }
   });
+  let lastTap = null;
   const up = e => {
     pointers.delete(e.pointerId);
     if (pointers.size < 2) gesture = null;
+    // explore mode: a quick tap with no drag; two of them zoom in on that spot
+    if (orbit && orbit.t0 && e.type === 'pointerup' && pointers.size === 0 &&
+        Math.hypot(e.clientX - orbit.sx, e.clientY - orbit.sy) < 10 && performance.now() - orbit.t0 < 300) {
+      const now = performance.now();
+      if (lastTap && now - lastTap.t < 350 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40) { zoomToward(e.clientX, e.clientY); lastTap = null; }
+      else lastTap = { t: now, x: e.clientX, y: e.clientY };
+    }
     if (pointers.size === 0) { orbit = null; endStroke(); }
   };
+  function zoomToward(cx, cy) {
+    const hit = view.pick(cx, cy, true);
+    if (!hit || view.zoomGoal > 2.6) { view.zoomGoal = 1; view.panGoal.set(0, 0, 0); return; }
+    view.panGoal.set(hit.x + 0.5 - W / 2, hit.y + 0.5 + view.root.position.y - 3.5, hit.z + 0.5 - D / 2);
+    view.zoomGoal = Math.min(3.2, view.zoomGoal * 1.8);
+    haptic(5);
+  }
   canvas.addEventListener('pointerup', up);
   canvas.addEventListener('pointercancel', up);
   canvas.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse' && !state.stroke) view.showCursor(null); });
@@ -459,7 +511,9 @@ function startVoxelWorlds() {
   window.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT') return;
     const keys = { 1: 'build', 2: 'dig', 3: 'water', 4: 'lava', 5: 'plant' };
-    if (keys[e.key]) document.querySelector(`.tools [data-tool="${keys[e.key]}"]`).click();
+    if (keys[e.key]) { if (state.mode === 'explore') setMode('edit', true); document.querySelector(`.tools [data-tool="${keys[e.key]}"]`).click(); }
+    if (e.key === 'x') setMode(state.mode === 'explore' ? 'edit' : 'explore');
+    if (e.key === 'r') surprise();
     if (e.key === 'q') rotate(-1);
     if (e.key === 'e') rotate(1);
     if ((e.key === 'z' && (e.ctrlKey || e.metaKey)) || e.key === 'u') doUndo();
@@ -475,8 +529,10 @@ function startVoxelWorlds() {
 
   function doUndo() {
     if (!undo.length) { toast('<span>Nothing to undo</span>', 1200); return; }
+    const before = world.theme + '|' + world.name;
     world.restore(undo.pop());
-    view.rebuildSolid(); view.snapFluids();
+    if (before !== world.theme + '|' + world.name) view.resetWorld(); else { view.rebuildSolid(); view.snapFluids(); }
+    updateHeader();
     Sound.dig();
   }
   $('#bUndo').onclick = doUndo;
@@ -509,12 +565,16 @@ function startVoxelWorlds() {
       b.onclick = () => onPick(k);
       wrap.appendChild(b);
     });
+    const rb = document.createElement('button'); rb.className = 'world random';
+    rb.innerHTML = `<div class="art"><i>🎲</i></div><b>Surprise me</b><span>A brand-new random landscape every time.</span>`;
+    rb.onclick = () => onPick('random');
+    wrap.appendChild(rb);
     return wrap;
   }
   function newWorld(k) {
     pushUndo();
-    meta.preset = k; world.generate(k); saveMeta(); updateHeader();
-    view.rebuildSolid(); view.snapFluids();
+    meta.preset = k; world.generate(k); world.name = PRESETS[k].name; saveMeta(); updateHeader();
+    view.resetWorld();
     view.panGoal.set(0, 0, 0); view.zoomGoal = 1;
   }
   function renderMenu() {
@@ -524,7 +584,11 @@ function startVoxelWorlds() {
     h('div', 'grab');
     h('h2', '', 'New world');
     h('p', 'muted', 'Your current world is replaced. Undo brings it back.');
-    body.appendChild(worldCards(k => { newWorld(k); closeSheets(); toast(`<b>${PRESETS[k].name}</b><span>${PRESETS[k].blurb}</span>`, 2600); }));
+    body.appendChild(worldCards(k => {
+      closeSheets();
+      if (k === 'random') { surprise(); return; }
+      newWorld(k); toast(`<b>${PRESETS[k].name}</b><span>${PRESETS[k].blurb}</span>`, 2600);
+    }));
     h('h2', '', `Discoveries <small>${found.size}/${DISCOVERIES.length}</small>`);
     const list = h('div', 'disc');
     DISCOVERIES.forEach(([k, name, desc]) => {
@@ -540,7 +604,7 @@ function startVoxelWorlds() {
     };
     row('Sound', Sound.on, () => Sound.toggle());
     row('Day cycles on its own', meta.auto, () => { meta.auto = !meta.auto; saveMeta(); });
-    h('p', 'muted small', 'Tap to use a tool. Hold to pour. Drag the sky to spin, pinch to zoom, two fingers to twist and pan. On a computer: right-drag spins, wheel zooms, keys 1–5 pick tools.');
+    h('p', 'muted small', 'Explore mode (the hand) is for looking around: drag to spin, pinch to zoom, double-tap to zoom in. In Edit mode, tap to use a tool. Hold to pour. Drag the sky to spin, pinch to zoom, two fingers to twist and pan. On a computer: right-drag spins, wheel zooms, keys 1–5 pick tools.');
   }
 
   function showIntro() {
@@ -548,7 +612,8 @@ function startVoxelWorlds() {
     intro.classList.add('open');
     const cards = $('#introWorlds'); cards.innerHTML = '';
     cards.appendChild(worldCards(k => {
-      newWorld(k); undo.length = 0; store.set('pb.intro', true);
+      if (k === 'random') surprise(); else newWorld(k);
+      undo.length = 0; store.set('pb.intro', true);
       intro.classList.remove('open'); Sound.init(); Sound.chime();
     }));
   }
@@ -687,7 +752,8 @@ function startVoxelWorlds() {
 
   window.addEventListener('resize', () => view.resize());
   updateHeader();
-  renderTray();
+  setMode(state.mode, true);
+  view.resetCritters();
   requestAnimationFrame(loop);
   window.__pb = { world, view, state };   // handy for poking at it from the console
 }

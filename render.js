@@ -36,6 +36,31 @@
     water: C(0x0070c0), waterShallow: C(0x00bfee), foam: C(0xb8f4ff),
     lava: C(0xff5c14), lavaHot: C(0xffb83a), lavaCrust: C(0xb83a14),
   };
+  P.clay = pal([0xd9784a, 0xc8683e, 0xe08a58]); P.clayLight = C(0xe8a070);
+  P.birch = C(0xf0ebe0); P.birchDark = C(0x8f857a); P.cap = C(0xd8403a); P.capSpot = C(0xf8f0e0); P.stem = C(0xefe6d2);
+
+  // per-theme colour overrides for random worlds
+  const themePal = o => { const q = {}; for (const k in o) q[k] = Array.isArray(o[k]) ? pal(o[k]) : C(o[k]); return q; };
+  const THEME_PAL = {
+    spring: {},
+    autumn: themePal({ grass: [0xa3c24a, 0xacc650, 0x98ba44, 0xb5ca58], grassSide: 0x93b040, leaves: [0xe8642a, 0xd9542a, 0xf07a34],
+      flowers: [0xff8a3a, 0xffd54a, 0xd9402a, 0xffffff], tuft: [0xb8c25a, 0xa8b44e] }),
+    sakura: themePal({ grass: [0x92d66c, 0x88ce62, 0x9cdc76, 0x82c65c], blossom: [0xffb7d5, 0xff9cc6, 0xffd0e4],
+      flowers: [0xffb7d5, 0xffffff, 0xff8fb8, 0xffe0ef], water: 0x1a8ad0, waterShallow: 0x40c8f0 }),
+    alpine: themePal({ grass: [0x5fae4a, 0x58a444, 0x66b652, 0x52a040], grassSide: 0x4f9a3c,
+      flowers: [0xffffff, 0x9ab8ff, 0xfff07a], water: 0x0a5aa8, waterShallow: 0x2a9ad8 }),
+    desert: themePal({ sand: [0xf2c47a, 0xeab86a, 0xf6d08e], sandSide: 0xdca560, tuft: [0xb8c060, 0xa8b050],
+      water: 0x0898b8, waterShallow: 0x28d8d0 }),
+    tropical: themePal({ grass: [0x6ad65a, 0x5fcc50, 0x78e066, 0x58c44a], leaves: [0x4cc84a, 0x3cb83e, 0x5ad858],
+      flowers: [0xff5a8a, 0xffd23a, 0xff7a3a, 0xb46aff], sand: [0xfbe7b0, 0xf6dea0, 0xfff0c6], water: 0x00a4c8, waterShallow: 0x30f0e8 }),
+    lavender: themePal({ grass: [0x8cc65a, 0x84bc54, 0x94cc62, 0x7cb44e], leaves: [0xb69ae6, 0xa48ad8, 0xc8b0f0],
+      flowers: [0x9a6ae0, 0xb084f0, 0x8a5ad0, 0xc0a0ff, 0xa070e8], tuft: [0x8ab85a, 0x7cad50] }),
+    mystic: themePal({ grass: [0x4fb89a, 0x48ae90, 0x58c2a4, 0x42a486], grassSide: 0x3e9a80, leaves: [0x6a8ae0, 0x5a7ad0, 0x7a9af0],
+      flowers: [0x7af0ff, 0xc08aff, 0xffffff], tuft: [0x5ad0b0, 0x4cc0a0], water: 0x3050b8, waterShallow: 0x5a8af0 }),
+    winter: themePal({ water: 0x2a70c0, waterShallow: 0x6ac4ee }),
+    volcanic: themePal({ grass: [0x6a9a3a, 0x5e8e34, 0x76a642], grassSide: 0x5a8a30, water: 0x0a7898, waterShallow: 0x2ab8c8 }),
+  };
+
   const pick = (list, x, y, z, s) => list[(hash3(x, y, z, s) * list.length) | 0];
   const jit = (c, x, y, z) => mul(c, 0.94 + hash3(x, y, z, 9) * 0.1);
 
@@ -262,7 +287,7 @@
     this.uTime = { value: 0 };
     this.solidMat = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.glowMat = new THREE.MeshBasicMaterial({ vertexColors: true });
-    this.waterMat = fluidMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.88, depthWrite: false,
+    this.waterMat = fluidMaterial(new THREE.MeshLambertMaterial({ vertexColors: true, transparent: true, opacity: 0.74, depthWrite: false,
       emissive: 0x06506a, emissiveIntensity: 0.4 }), 'water', 0.045, 1.8, this.uTime, 9);
     // depth-only pass: lets the translucent water show only its front-most surface,
     // so back faces and inner walls never shimmer through
@@ -448,11 +473,12 @@
   R.rebuildSolid = function () {
     const w = this.world, type = w.type;
     if (!this.solidBuf) { this.solidBuf = new FBuf(); this.glowBuf = new FBuf(); }
+    if (this.palTheme !== w.theme || !this.pal) { this.pal = Object.assign({}, P, THEME_PAL[w.theme] || {}); this.palTheme = w.theme; }
     const buf = this.solidBuf, glow = this.glowBuf;
     buf.reset(); glow.reset();
     const L = W * D;
     const op = (x, y, z) => (x >= 0 && y >= 0 && z >= 0 && x < W && y < H && z < D && OPAQUE[type[x + z * W + y * L]]) | 0;
-    const S = this.surfaces; S.vents = []; S.lanterns = []; S.grass = [];
+    const S = this.surfaces; S.vents = []; S.lanterns = []; S.grass = []; S.flowers = [];
     const br = [0, 0, 0, 0], ps = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]], cs = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
     const setC = (k, c, b) => { cs[k][0] = c[0] * b; cs[k][1] = c[1] * b; cs[k][2] = c[2] * b; };
 
@@ -498,69 +524,76 @@
   };
 
   R.faceColor = function (t, x, y, z, f) {
+    const Q = this.pal || P;
     const top = f === 2;
     const stripe = (base, dark, light) => (y % 4 === 0 ? dark : y % 4 === 2 ? light : base);
     switch (t) {
       case T.GRASS:
-        if (top) return { c: jit(pick(P.grass, x, 0, z, 1), x, y, z) };
-        return { c: jit(stripe(P.dirt, P.dirtDark, P.dirtLight), x, y, z), top: jit(P.grassSide, x, y, z), band: 0.28 };
-      case T.DIRT: return { c: jit(top ? P.dirtLight : stripe(P.dirt, P.dirtDark, P.dirtLight), x, y, z) };
-      case T.STONE: return { c: jit(pick(P.stone, x, y, z, 2), x, y, z) };
-      case T.SAND: return { c: jit(top ? pick(P.sand, x, 0, z, 3) : (y % 3 === 0 ? P.sandSide : P.sand[0]), x, y, z) };
+        if (top) return { c: jit(pick(Q.grass, x, 0, z, 1), x, y, z) };
+        return { c: jit(stripe(Q.dirt, Q.dirtDark, Q.dirtLight), x, y, z), top: jit(Q.grassSide, x, y, z), band: 0.28 };
+      case T.DIRT: return { c: jit(top ? Q.dirtLight : stripe(Q.dirt, Q.dirtDark, Q.dirtLight), x, y, z) };
+      case T.STONE: return { c: jit(pick(Q.stone, x, y, z, 2), x, y, z) };
+      case T.SAND: return { c: jit(top ? pick(Q.sand, x, 0, z, 3) : (y % 3 === 0 ? Q.sandSide : Q.sand[0]), x, y, z) };
       case T.SNOW:
-        if (top) return { c: jit(pick(P.snow, x, 0, z, 4), x, y, z) };
-        return { c: jit(stripe(P.dirt, P.dirtDark, P.dirtLight), x, y, z), top: P.snow[0], band: 0.36 };
-      case T.LOG: return { c: top ? P.logTop : jit(P.log, x, y, z) };
-      case T.LEAVES: return { c: jit(pick(P.leaves, x, y, z, 5), x, y, z) };
-      case T.BLOSSOM: return { c: jit(pick(P.blossom, x, y, z, 5), x, y, z) };
-      case T.AUTUMN: return { c: jit(pick(P.autumn, x, y, z, 5), x, y, z) };
-      case T.PINE: return { c: jit(pick(P.pine, x, y, z, 5), x, y, z) };
-      case T.PLANK: return { c: (y % 2 ? P.plank : P.plankDark) };
-      case T.BRICK: return { c: jit(pick(P.brick, x, y, z, 6), x, y, z) };
-      case T.OBSIDIAN: return { c: jit(pick(P.obsidian, x, y, z, 7), x, y, z) };
-      case T.BASALT: return { c: jit(pick(P.basalt, x, y, z, 7), x, y, z) };
-      case T.SPRING: return { c: top ? P.spring : jit(P.stone[0], x, y, z) };
-      case T.VENT: return { c: top ? P.vent : jit(P.basalt[1], x, y, z) };
-      case T.MOSS: return { c: jit(pick(P.moss, x, y, z, 8), x, y, z) };
+        if (top) return { c: jit(pick(Q.snow, x, 0, z, 4), x, y, z) };
+        return { c: jit(stripe(Q.dirt, Q.dirtDark, Q.dirtLight), x, y, z), top: Q.snow[0], band: 0.36 };
+      case T.LOG: return { c: top ? Q.logTop : jit(Q.log, x, y, z) };
+      case T.LEAVES: return { c: jit(pick(Q.leaves, x, y, z, 5), x, y, z) };
+      case T.BLOSSOM: return { c: jit(pick(Q.blossom, x, y, z, 5), x, y, z) };
+      case T.AUTUMN: return { c: jit(pick(Q.autumn, x, y, z, 5), x, y, z) };
+      case T.PINE: return { c: jit(pick(Q.pine, x, y, z, 5), x, y, z) };
+      case T.PLANK: return { c: (y % 2 ? Q.plank : Q.plankDark) };
+      case T.BRICK: return { c: jit(pick(Q.brick, x, y, z, 6), x, y, z) };
+      case T.OBSIDIAN: return { c: jit(pick(Q.obsidian, x, y, z, 7), x, y, z) };
+      case T.BASALT: return { c: jit(pick(Q.basalt, x, y, z, 7), x, y, z) };
+      case T.SPRING: return { c: top ? Q.spring : jit(Q.stone[0], x, y, z) };
+      case T.VENT: return { c: top ? Q.vent : jit(Q.basalt[1], x, y, z) };
+      case T.MOSS: return { c: jit(pick(Q.moss, x, y, z, 8), x, y, z) };
+      case T.CLAY: return { c: jit(top ? Q.clayLight : pick(Q.clay, x, y >> 1, z, 12), x, y, z) };
+      case T.BIRCH: return { c: top ? Q.logTop : hash3(x, y, z, f) < 0.2 ? Q.birchDark : jit(Q.birch, x, y, z) };
+      case T.CAP: return { c: hash3(x, y, z, f + 3) < 0.18 ? Q.capSpot : jit(Q.cap, x, y, z) };
+      case T.STEM: return { c: jit(Q.stem, x, y, z) };
       default: return { c: [1, 0, 1] };
     }
   };
 
   R.decor = function (buf, glow, t, x, y, z, op) {
+    const Q = this.pal || P;
     const h = (s) => hash3(x, y, z, s);
     if (t === T.FLOWER) {
+      this.surfaces.flowers.push([x + 0.5, y + 0.6, z + 0.5]);
       const ox = (h(1) - 0.5) * 0.4, oz = (h(2) - 0.5) * 0.4, sh = 0.22 + h(3) * 0.2;
-      buf.box(x + 0.46 + ox, y, z + 0.46 + oz, x + 0.54 + ox, y + sh, z + 0.54 + oz, P.stem);
-      buf.box(x + 0.36 + ox, y + sh, z + 0.36 + oz, x + 0.64 + ox, y + sh + 0.2, z + 0.64 + oz, pick(P.flowers, x, y, z, 4));
+      buf.box(x + 0.46 + ox, y, z + 0.46 + oz, x + 0.54 + ox, y + sh, z + 0.54 + oz, Q.stem);
+      buf.box(x + 0.36 + ox, y + sh, z + 0.36 + oz, x + 0.64 + ox, y + sh + 0.2, z + 0.64 + oz, pick(Q.flowers, x, y, z, 4));
       buf.box(x + 0.45 + ox, y + sh + 0.2, z + 0.45 + oz, x + 0.55 + ox, y + sh + 0.24, z + 0.55 + oz, [1, 0.9, 0.4]);
     } else if (t === T.TUFT) {
       for (let k = 0; k < 3; k++) {
         const ox = 0.2 + h(k + 1) * 0.55, oz = 0.2 + h(k + 5) * 0.55, hh = 0.2 + h(k + 9) * 0.3;
-        buf.box(x + ox, y, z + oz, x + ox + 0.09, y + hh, z + oz + 0.09, pick(P.tuft, x + k, y, z, 3));
+        buf.box(x + ox, y, z + oz, x + ox + 0.09, y + hh, z + oz + 0.09, pick(Q.tuft, x + k, y, z, 3));
       }
     } else if (t === T.SAPLING) {
-      buf.box(x + 0.45, y, z + 0.45, x + 0.55, y + 0.45, z + 0.55, P.log);
-      buf.box(x + 0.28, y + 0.35, z + 0.4, x + 0.48, y + 0.5, z + 0.6, P.leaves[2]);
-      buf.box(x + 0.52, y + 0.42, z + 0.4, x + 0.72, y + 0.57, z + 0.6, P.leaves[0]);
+      buf.box(x + 0.45, y, z + 0.45, x + 0.55, y + 0.45, z + 0.55, Q.log);
+      buf.box(x + 0.28, y + 0.35, z + 0.4, x + 0.48, y + 0.5, z + 0.6, Q.leaves[2]);
+      buf.box(x + 0.52, y + 0.42, z + 0.4, x + 0.72, y + 0.57, z + 0.6, Q.leaves[0]);
     } else if (t === T.MUSHROOM) {
-      buf.box(x + 0.43, y, z + 0.43, x + 0.57, y + 0.22, z + 0.57, P.shroomStem);
-      buf.box(x + 0.28, y + 0.22, z + 0.28, x + 0.72, y + 0.4, z + 0.72, P.shroomCap);
-      buf.box(x + 0.34, y + 0.4, z + 0.34, x + 0.42, y + 0.42, z + 0.42, P.shroomStem);
-      buf.box(x + 0.56, y + 0.4, z + 0.5, x + 0.64, y + 0.42, z + 0.58, P.shroomStem);
+      buf.box(x + 0.43, y, z + 0.43, x + 0.57, y + 0.22, z + 0.57, Q.shroomStem);
+      buf.box(x + 0.28, y + 0.22, z + 0.28, x + 0.72, y + 0.4, z + 0.72, Q.shroomCap);
+      buf.box(x + 0.34, y + 0.4, z + 0.34, x + 0.42, y + 0.42, z + 0.42, Q.shroomStem);
+      buf.box(x + 0.56, y + 0.4, z + 0.5, x + 0.64, y + 0.42, z + 0.58, Q.shroomStem);
     } else if (t === T.CACTUS) {
       const top = this.world.get(x, y + 1, z) !== T.CACTUS;
-      const c = jit(pick(P.cactus, x, y, z, 2), x, y, z);
+      const c = jit(pick(Q.cactus, x, y, z, 2), x, y, z);
       buf.box(x + 0.16, y, z + 0.16, x + 0.84, y + 1, z + 0.84, c);
       buf.box(x + 0.12, y + 0.15, z + 0.46, x + 0.16, y + 0.9, z + 0.54, mul(c, 0.85));
       buf.box(x + 0.84, y + 0.15, z + 0.46, x + 0.88, y + 0.9, z + 0.54, mul(c, 0.85));
-      if (top && h(5) < 0.5) buf.box(x + 0.4, y + 1, z + 0.4, x + 0.6, y + 1.12, z + 0.6, P.flowers[0]);
+      if (top && h(5) < 0.5) buf.box(x + 0.4, y + 1, z + 0.4, x + 0.6, y + 1.12, z + 0.6, Q.flowers[0]);
     } else if (t === T.LANTERN) {
       const onGround = op(x, y - 1, z);
       const y0 = onGround ? y : y + 0.3;
-      glow.box(x + 0.32, y0 + 0.05, z + 0.32, x + 0.68, y0 + 0.45, z + 0.68, P.lantern);
-      buf.box(x + 0.27, y0 + 0.45, z + 0.27, x + 0.73, y0 + 0.53, z + 0.73, P.lanternCap);
-      buf.box(x + 0.3, y0, z + 0.3, x + 0.7, y0 + 0.05, z + 0.7, P.lanternCap);
-      if (!onGround) buf.box(x + 0.48, y0 + 0.53, z + 0.48, x + 0.52, y + 1, z + 0.52, P.lanternCap);
+      glow.box(x + 0.32, y0 + 0.05, z + 0.32, x + 0.68, y0 + 0.45, z + 0.68, Q.lantern);
+      buf.box(x + 0.27, y0 + 0.45, z + 0.27, x + 0.73, y0 + 0.53, z + 0.73, Q.lanternCap);
+      buf.box(x + 0.3, y0, z + 0.3, x + 0.7, y0 + 0.05, z + 0.7, Q.lanternCap);
+      if (!onGround) buf.box(x + 0.48, y0 + 0.53, z + 0.48, x + 0.52, y + 1, z + 0.52, Q.lanternCap);
       this.surfaces.lanterns.push([x + 0.5, y0 + 0.3, z + 0.5]);
     }
   };
@@ -579,14 +612,16 @@
       const target = f ? Math.min(1.05, mass[i]) : 0;
       dm[i] += (target - dm[i]) * k;
       dFall[i] += ((f ? w.fallIn[i] : 0) - dFall[i]) * kf;
-      dEdge[i] += ((f ? w.edgeOut[i] : 0) - dEdge[i]) * kf;
-      if (!f && dm[i] < 0.012) { df[i] = 0; dm[i] = dFall[i] = dEdge[i] = 0; continue; }
+      const eo = f ? w.edgeOut[i] : 0;     // edge falls build quickly and fade slowly
+      dEdge[i] += (eo - dEdge[i]) * (eo > dEdge[i] ? kf : 1 - Math.exp(-dt * 0.9));
+      if (!f && dm[i] < 0.012 && dEdge[i] < 0.0004) { df[i] = 0; dm[i] = dFall[i] = dEdge[i] = 0; continue; }
       any = true;
     }
     return any;
   };
 
   R.rebuildFluids = function () {
+    const Q = this.pal || P;
     const w = this.world, type = w.type, dm = this.dm, df = this.df, dFall = this.dFall, dEdge = this.dEdge;
     const wb = this.waterBuf, lb = this.lavaBuf;
     wb.reset(); lb.reset();
@@ -627,11 +662,11 @@
       if (f === WATER) {
         let d = 0;
         for (let k = 1; k <= 3 && y - k >= 0; k++) { const j = i - k * L; if (!has(j, f)) break; d += Math.min(1, dm[j]); }
-        col = mix(P.waterShallow, P.water, Math.min(1, (d + m) / 3.2));
-        col = mix(col, P.foam, Math.min(0.6, dFall[i] * 2.5 + (falling ? 0.28 : 0)));
+        col = mix(Q.waterShallow, Q.water, Math.min(1, (d + m) / 3.2));
+        col = mix(col, Q.foam, Math.min(0.6, dFall[i] * 2.5 + (falling ? 0.28 : 0)));
       } else {
         const r = hash3(x, y, z, 11);
-        col = r < 0.2 && !falling ? P.lavaCrust : mix(P.lava, P.lavaHot, falling ? 0.8 : r);
+        col = r < 0.2 && !falling ? Q.lavaCrust : mix(Q.lava, Q.lavaHot, falling ? 0.8 : r);
       }
       const flow = Math.min(1, dFall[i] * 5 + (falling ? 0.7 : 0));
 
@@ -683,7 +718,7 @@
         const ma = Math.min(1, dm[i + L]);
         const wa = Math.max(0.34, Math.min(1, 0.26 + 1.4 * Math.sqrt(ma)));
         const a = (1 - wa) / 2, base = y + Math.min(h[0], h[1], h[2], h[3]) - 0.02;
-        const fc = mix(col, P.foam, f === WATER ? 0.3 : 0);
+        const fc = mix(col, Q.foam, f === WATER ? 0.3 : 0);
         for (let s = 0; s < 4; s++) {
           if (nb[s] === 2) continue;
           const F = FACES[SIDES[s][2]];
@@ -698,10 +733,10 @@
       }
 
       // a sheet of water pouring over the island's edge, down its side
-      if (dEdge[i] > 0.0015 && !covered) {
-        const ww = Math.max(0.35, Math.min(1, 0.35 + dEdge[i] * 22));
+      if (dEdge[i] > 0.0008 && !covered) {
+        const ww = Math.min(1, Math.sqrt(dEdge[i]) * 5);   // thins smoothly to nothing
         const top = y + Math.min(hAt(0, 0), hAt(1, 1)) - 0.02, bot = -1.2;
-        const fc = mix(col, f === WATER ? P.foam : P.lavaHot, 0.35);
+        const fc = mix(col, f === WATER ? Q.foam : Q.lavaHot, 0.35);
         for (let s = 0; s < 4; s++) {
           const [dx, dz, fi] = SIDES[s];
           const xx = x + dx, zz = z + dz;
@@ -861,6 +896,179 @@
   };
 
   // =================================================================
+
+  // =================================================================
+  // Critters: fish in the lakes, bunnies hopping about, birds overhead and
+  // butterflies around the flowers. Purely visual; they read the world as they go.
+  const CRITTERS = {
+    _: { fish: 3, bunnies: 2, birds: 3, butterflies: 8, fishCol: [0xff8a3a, 0xffffff], bunnyCol: [0xf4efe6, 0xb08a68], birdCol: [0xf8f8f8, 0x46505e] },
+    spring: { fish: 4, bunnies: 3, birds: 3, butterflies: 12 },
+    autumn: { fish: 3, bunnies: 3, birds: 4, butterflies: 4, bunnyCol: [0xb08a68, 0x8a6a4a] },
+    sakura: { fish: 7, bunnies: 1, birds: 2, butterflies: 10, fishCol: [0xff7a3a, 0xffffff, 0xf8d040] },
+    alpine: { fish: 3, bunnies: 2, birds: 3, butterflies: 3 },
+    desert: { fish: 2, bunnies: 2, birds: 2, butterflies: 1, bunnyCol: [0xd8b47a, 0xc89a62], birdCol: [0x5a4a40, 0x3a3030] },
+    tropical: { fish: 9, bunnies: 0, birds: 4, butterflies: 9, fishCol: [0x3ad0ff, 0xffd23a, 0xff5a8a, 0x8a5aff], birdCol: [0xe83a3a, 0x3a7ae8, 0xf8d040] },
+    lavender: { fish: 3, bunnies: 3, birds: 2, butterflies: 18 },
+    mystic: { fish: 4, bunnies: 1, birds: 0, butterflies: 0, fireflies: true, fishCol: [0x7af0ff, 0xc08aff] },
+    winter: { fish: 2, bunnies: 3, birds: 2, butterflies: 0, bunnyCol: [0xffffff, 0xeef4ff], birdCol: [0xc83a3a, 0x46505e] },
+    volcanic: { fish: 2, bunnies: 0, birds: 2, butterflies: 2, birdCol: [0x3a3a40, 0x5a5a62] },
+  };
+
+  R.critterConfig = function () { return Object.assign({}, CRITTERS._, CRITTERS[this.world.theme] || {}); };
+
+  R.resetCritters = function () {
+    const w = this.world, cfg = this.critterConfig(), rnd = Math.random;
+    if (!this.critMesh) {
+      this.critMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial(), 400);
+      this.critMesh.castShadow = true; this.critMesh.frustumCulled = false;
+      this.root.add(this.critMesh);
+      this.dummy = new THREE.Object3D(); this.dummy.rotation.order = 'YXZ';
+    }
+    const colOf = list => { const c = new THREE.Color(list[(rnd() * list.length) | 0]); return [c.r, c.g, c.b]; };
+    // fish live in surface cells of water at least two deep
+    const pond = [];
+    for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) for (let y = 1; y < H - 1; y++) {
+      const i = idx(x, y, z);
+      if (w.fluid[i] === WATER && w.mass[i] > 0.9 && w.fluid[i - PB.WD] === WATER && !w.fluid[i + PB.WD]) pond.push([x, y, z]);
+    }
+    this.fish = [];
+    for (let k = 0; k < (pond.length >= 6 ? cfg.fish : 0); k++) {
+      const [x, y, z] = pond[(rnd() * pond.length) | 0];
+      this.fish.push({ x: x + 0.5, y: y + 0.84, z: z + 0.5, h: rnd() * 6.28, v: 0.5 + rnd() * 0.5, col: colOf(cfg.fishCol), wig: rnd() * 6 });
+    }
+    // bunnies need open grass
+    const meadow = [];
+    for (let z = 0; z < D; z++) for (let x = 0; x < W; x++) if (this.walkable(x, z) >= 0) meadow.push([x, z]);
+    this.bunnies = [];
+    for (let k = 0; k < (meadow.length > 20 ? cfg.bunnies : 0); k++) {
+      const [x, z] = meadow[(rnd() * meadow.length) | 0];
+      const y = this.walkable(x, z) + 1;
+      this.bunnies.push({ x, z, y, fx: x, fz: z, fy: y, tx: x, tz: z, ty: y, t: 1, wait: rnd() * 2, h: rnd() * 6.28, vy: 0, col: colOf(cfg.bunnyCol) });
+    }
+    this.birds = [];
+    for (let k = 0; k < cfg.birds; k++) {
+      this.birds.push({ a: rnd() * 6.28, r: 6 + rnd() * 8, y: H - 2 + rnd() * 4, sp: (0.25 + rnd() * 0.2) * (rnd() < 0.5 ? 1 : -1),
+        cx: W / 2 + (rnd() - 0.5) * 6, cz: D / 2 + (rnd() - 0.5) * 6, flap: rnd() * 6, col: colOf(cfg.birdCol) });
+    }
+    this.critCfg = cfg;
+  };
+
+  // top of a column a bunny can stand on, or -1
+  R.walkable = function (x, z) {
+    if (x < 0 || z < 0 || x >= W || z >= D) return -1;
+    const w = this.world, y = w.topY(x, z);
+    if (y < 0 || y >= H - 1) return -1;
+    const t = w.type[idx(x, y, z)];
+    if (t !== T.GRASS && t !== T.SNOW && t !== T.SAND && t !== T.DIRT && t !== T.MOSS) return -1;
+    if (w.fluid[idx(x, y + 1, z)]) return -1;
+    return y;
+  };
+
+  R.updateCritters = function (dt, t) {
+    if (!this.fish) this.resetCritters();
+    const w = this.world, d = this.dummy, m = this.critMesh, night = this.ph.night;
+    let n = 0;
+    const box = (x, y, z, sx, sy, sz, ry, rx, col) => {
+      if (n >= 400) return;
+      d.position.set(x, y, z); d.rotation.set(rx || 0, ry, 0); d.scale.set(sx, sy, sz); d.updateMatrix();
+      m.setMatrixAt(n, d.matrix); this._c.setRGB(col[0], col[1], col[2]); m.setColorAt(n, this._c); n++;
+    };
+    this._c = this._c || new THREE.Color();
+    const fwd = (h, a) => [Math.cos(h) * a, -Math.sin(h) * a];
+
+    // fish: cruise, turn back at the shore, wiggle
+    this.fish = this.fish.filter(f => {
+      const cell = (x, z) => { const xi = Math.floor(x), zi = Math.floor(z), yi = Math.floor(f.y); return xi >= 0 && zi >= 0 && xi < W && zi < D && w.fluid[idx(xi, yi, zi)] === WATER && w.mass[idx(xi, yi, zi)] > 0.75; };
+      if (!cell(f.x, f.z)) return false;                    // its pond drained
+      if (Math.random() < dt * 0.4) f.h += (Math.random() - 0.5) * 2;
+      const [dx, dz] = fwd(f.h, f.v * dt);
+      if (cell(f.x + dx * 6, f.z + dz * 6)) { f.x += dx; f.z += dz; } else f.h += Math.PI * (0.6 + Math.random() * 0.8);
+      f.wig += dt * 9;
+      const sway = Math.sin(f.wig) * 0.35;
+      box(f.x, f.y + Math.sin(t * 1.3 + f.wig * 0.1) * 0.03, f.z, 0.46, 0.16, 0.18, f.h + sway * 0.3, 0, f.col);
+      const [tx, tz] = fwd(f.h + sway, -0.29);
+      box(f.x + tx, f.y, f.z + tz, 0.14, 0.16, 0.04, f.h + sway, 0, f.col);
+      return true;
+    });
+
+    // bunnies: wait, look around, hop to a neighbouring patch of ground; fall if the ground goes
+    for (const b of this.bunnies) {
+      if (b.t < 1) {
+        b.t = Math.min(1, b.t + dt / 0.38);
+        const s = b.t;
+        b.x = b.fx + (b.tx - b.fx) * s; b.z = b.fz + (b.tz - b.fz) * s;
+        b.y = b.fy + (b.ty - b.fy) * s + Math.sin(Math.PI * s) * 0.55;
+      } else {
+        const ground = this.walkable(Math.round(b.tx), Math.round(b.tz));
+        if (ground < 0 || ground + 1 < b.y - 0.01) {        // dug out from under it: tumble down
+          const y = w.topY(Math.round(b.tx), Math.round(b.tz));
+          b.vy += 22 * dt; b.y -= b.vy * dt;
+          if (y >= 0 && b.y <= y + 1) { b.y = y + 1; b.vy = 0; if (ground < 0) b.wait = 0; }
+          if (b.y < -10) { b.y = -10; }
+        } else if (ground + 1 > b.y + 0.01) b.y = ground + 1;
+        b.wait -= dt;
+        if (b.wait <= 0 && night < 0.7) {
+          const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+          const [dx, dz] = dirs[(Math.random() * 4) | 0];
+          const nx = Math.round(b.tx) + dx, nz = Math.round(b.tz) + dz, ny = this.walkable(nx, nz);
+          if (ny >= 0 && Math.abs(ny + 1 - b.y) <= 1.01) {
+            b.fx = b.x = Math.round(b.tx); b.fz = b.z = Math.round(b.tz); b.fy = b.y;
+            b.tx = nx; b.tz = nz; b.ty = ny + 1; b.t = 0;
+            b.h = Math.atan2(-dz, dx);
+          }
+          b.wait = Math.random() < 0.3 ? 0.15 : 0.8 + Math.random() * 2.5;
+        }
+      }
+      const px = b.x + 0.5, pz = b.z + 0.5, py = b.y;
+      const crouch = b.t < 1 ? 1.1 : 1 + Math.sin(t * 6 + b.fx) * 0.03;
+      box(px, py + 0.16 * crouch, pz, 0.46, 0.32 * crouch, 0.34, b.h, 0, b.col);
+      const [hx, hz] = fwd(b.h, 0.25);
+      box(px + hx, py + 0.4, pz + hz, 0.24, 0.23, 0.23, b.h, 0, b.col);
+      const [sx, sz] = [Math.sin(b.h) * 0.065, Math.cos(b.h) * 0.065];
+      box(px + hx * 0.8 + sx, py + 0.62, pz + hz * 0.8 + sz, 0.065, 0.24, 0.065, b.h, 0, b.col);
+      box(px + hx * 0.8 - sx, py + 0.62, pz + hz * 0.8 - sz, 0.065, 0.24, 0.065, b.h, 0, b.col);
+      const [ex, ez] = fwd(b.h, 0.37);
+      box(px + ex + sx * 0.9, py + 0.44, pz + ez + sz * 0.9, 0.03, 0.05, 0.05, b.h, 0, [0.1, 0.08, 0.08]);
+      box(px + ex - sx * 0.9, py + 0.44, pz + ez - sz * 0.9, 0.03, 0.05, 0.05, b.h, 0, [0.1, 0.08, 0.08]);
+      const [bx, bz] = fwd(b.h, -0.26);
+      box(px + bx, py + 0.24, pz + bz, 0.11, 0.11, 0.11, b.h, 0, [1, 1, 1]);
+    }
+
+    // birds circle by day and head home at night
+    if (night < 0.6) for (const b of this.birds) {
+      b.a += b.sp * dt; b.flap += dt * (9 + Math.sin(b.a * 3) * 3);
+      const x = b.cx + Math.cos(b.a) * b.r, z = b.cz + Math.sin(b.a) * b.r, y = b.y + Math.sin(b.a * 2) * 0.6;
+      const h = Math.atan2(-(Math.cos(b.a) * b.sp), -Math.sin(b.a) * b.sp);
+      box(x, y, z, 0.32, 0.11, 0.13, h, 0, b.col);
+      const roll = Math.sin(b.flap) * 0.7, [sx, sz] = [Math.sin(h) * 0.16, Math.cos(h) * 0.16];
+      box(x + sx, y + 0.02, z + sz, 0.16, 0.03, 0.3, h, roll, b.col);
+      box(x - sx, y + 0.02, z - sz, 0.16, 0.03, 0.3, h, -roll, b.col);
+    }
+    m.count = n;
+    m.instanceMatrix.needsUpdate = true;
+    if (m.instanceColor) m.instanceColor.needsUpdate = true;
+
+    // butterflies flutter around flowers by day; a mystic grove glows with fireflies
+    const S = this.surfaces, cfg = this.critCfg;
+    if (cfg.butterflies && night < 0.4 && S.flowers && S.flowers.length && this.flutter < cfg.butterflies && Math.random() < dt * 2) {
+      const [x, y, z] = S.flowers[(Math.random() * S.flowers.length) | 0];
+      const Q = this.pal || P, c = Q.flowers[(Math.random() * Q.flowers.length) | 0];
+      this.fx.spawn(x, y + 0.5, z, 0, 0.1, 0, mix(c, [1, 1, 1], 0.15), 0.17, 6 + Math.random() * 4, 0, 0.8, true);
+    }
+    this.flutter = 0;
+    for (let k = 0; k < this.fx.n; k++) if (this.fx.wander[k]) this.flutter++;
+    if (cfg.fireflies && S.grass.length && this.glowFx.n < 500 && Math.random() < dt * 5) {
+      const [x, y, z] = S.grass[(Math.random() * S.grass.length) | 0];
+      this.glowFx.spawn(x + Math.random(), y + 1.3 + Math.random() * 1.5, z + Math.random(), 0, 0, 0, [0.5, 1, 0.9], 0.13, 5 + Math.random() * 4, 0, 0.6, true);
+    }
+  };
+
+  // a whole new world (or an undo): fresh meshes, no leftover particles, new critters
+  R.resetWorld = function () {
+    this.fx.n = 0; this.glowFx.n = 0;
+    this.rebuildSolid(); this.snapFluids(); this.resetCritters();
+  };
+
   // jump the displayed fluid straight to the simulation (new world, undo, load)
   R.snapFluids = function () {
     const w = this.world;
@@ -877,6 +1085,7 @@
     if (anyFluid || this.hadFluid) this.rebuildFluids();
     this.hadFluid = anyFluid;
     this.updateFalling(alpha || 0);
+    this.updateCritters(dt, t);
     if (this.phaseT < 1) { this.phaseT = Math.min(1, this.phaseT + dt / 2.5); this.applyPhase(this.phaseT); }
 
     // camera easing
